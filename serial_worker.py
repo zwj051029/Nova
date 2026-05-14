@@ -1,4 +1,5 @@
 import threading
+import time
 import serial
 from PySide6.QtCore import QObject, Signal
 
@@ -37,6 +38,7 @@ class SerialWorker(QObject):
     def write(self, data: bytes) -> None:
         if self._port and self._port.is_open:
             self._port.write(data)
+            self._port.flush()  # 立即推送到驱动层，不在缓冲区积压
 
     def _read_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -46,5 +48,7 @@ class SerialWorker(QObject):
                     line = raw.decode("utf-8", errors="replace").strip()
                     if line:
                         self.line_received.emit(line)
+                else:
+                    time.sleep(0.001)  # 无数据时让出 GIL，避免空转抢占主线程
             except serial.SerialException:
                 break

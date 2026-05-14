@@ -371,7 +371,7 @@ class SerialPage(QWidget):
         t = self._tr.tr
         if self._is_hex_mode:
             try:
-                data = bytes.fromhex(text.replace(" ", ""))
+                data = bytes.fromhex(text.replace(" ", "")) + b"\r\n"
             except ValueError as e:
                 self._append_to(self._recv_box, t("hex_error") + str(e), "#C62828")
                 return

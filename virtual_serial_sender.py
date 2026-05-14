@@ -23,11 +23,15 @@ BAUDRATE = 115200
 def receive_loop(ser: serial.Serial) -> None:
     while True:
         try:
-            if ser.in_waiting:
-                raw = ser.readline()
-                line = raw.decode("utf-8", errors="replace").strip()
-                if line:
-                    print(f"[收到] {line}")
+            waiting = ser.in_waiting
+            if waiting:
+                raw = ser.read(waiting)          # 读取所有已到达的字节，不等换行符
+                text = raw.decode("utf-8", errors="replace")
+                for line in text.splitlines():   # 有换行就按行显示，没有就整体显示
+                    if line.strip():
+                        print(f"[收到] {line}")
+            else:
+                time.sleep(0.005)
         except serial.SerialException:
             break
 
