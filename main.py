@@ -40,10 +40,10 @@ QPushButton:pressed  { background-color: #6DB89A; }
 QPushButton:disabled { background-color: #D0D0D0; color: #888888; }
 QGroupBox {
     font-weight: bold;
-    border: 1px solid #D0D8E4;
+    border: 1px solid #B8C4D0;
     border-radius: 6px;
     margin-top: 8px;
-    background-color: rgba(255,255,255,200);
+    background-color: rgba(255,255,255,220);
 }
 QGroupBox::title {
     subcontrol-origin: margin;

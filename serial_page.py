@@ -25,7 +25,36 @@ QPushButton:hover   { background-color: #5AA882; }
 QPushButton:pressed { background-color: #4A9870; }
 """
 
+# 字符串模式：默认绿色（继承全局）
+MODE_STR_STYLE = ""
+
+# 十六进制模式：橙黄色提醒
+MODE_HEX_STYLE = """
+QPushButton {
+    background-color: #F5A623;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-weight: bold;
+}
+QPushButton:hover   { background-color: #E09515; }
+QPushButton:pressed { background-color: #C8840A; }
+"""
+
 _MONO_FONT = QFont("Consolas", 9)
+
+# 统一文本框边框样式
+_BOX_STYLE_SEND = (
+    "background: #F0F8FF;"
+    "border: 1px solid #C8D0DC;"
+    "border-radius: 4px;"
+)
+_BOX_STYLE_RECV = (
+    "background: #FAFAFA;"
+    "border: 1px solid #C8D0DC;"
+    "border-radius: 4px;"
+)
 
 
 class SerialPage(QWidget):
@@ -185,9 +214,7 @@ class SerialPage(QWidget):
         self._send_box = QPlainTextEdit()
         self._send_box.setReadOnly(True)
         self._send_box.setFont(_MONO_FONT)
-        self._send_box.setStyleSheet(
-            "background: #F0F8FF; border: 1px solid #D0D8E4; border-radius: 4px;"
-        )
+        self._send_box.setStyleSheet(_BOX_STYLE_SEND)
         v.addWidget(self._send_box, stretch=1)
 
         # input row
@@ -202,17 +229,26 @@ class SerialPage(QWidget):
         v.addLayout(input_row)
 
         # options row
-        opt_row = QHBoxLayout()
-        self._hex_chk = QCheckBox()
+        self._is_hex_mode = False  # False = string, True = hex
+
+        self._mode_btn = QPushButton()
+        self._mode_btn.setFixedWidth(100)
+        self._mode_btn.clicked.connect(self._toggle_mode)
+
         self._loop_chk = QCheckBox()
         self._loop_chk.toggled.connect(self._toggle_loop)
+
         self._interval_spin = QSpinBox()
         self._interval_spin.setRange(50, 60000)
         self._interval_spin.setValue(1000)
-        self._interval_spin.setFixedWidth(72)
+        self._interval_spin.setMinimumWidth(90)  # 防止数字与箭头重叠
+
         self._interval_label = QLabel()
-        opt_row.addWidget(self._hex_chk)
-        opt_row.addSpacing(12)
+
+        opt_row = QHBoxLayout()
+        opt_row.setSpacing(8)
+        opt_row.addWidget(self._mode_btn)
+        opt_row.addSpacing(4)
         opt_row.addWidget(self._loop_chk)
         opt_row.addWidget(self._interval_spin)
         opt_row.addWidget(self._interval_label)
@@ -241,9 +277,7 @@ class SerialPage(QWidget):
         self._recv_box = QPlainTextEdit()
         self._recv_box.setReadOnly(True)
         self._recv_box.setFont(_MONO_FONT)
-        self._recv_box.setStyleSheet(
-            "background: #FAFAFA; border: 1px solid #D0D8E4; border-radius: 4px;"
-        )
+        self._recv_box.setStyleSheet(_BOX_STYLE_RECV)
         v.addWidget(self._recv_box, stretch=1)
         return panel
 
@@ -327,7 +361,7 @@ class SerialPage(QWidget):
         if not text:
             return
         t = self._tr.tr
-        if self._hex_chk.isChecked():
+        if self._is_hex_mode:
             try:
                 data = bytes.fromhex(text.replace(" ", ""))
             except ValueError as e:
@@ -347,6 +381,10 @@ class SerialPage(QWidget):
             self._loop_timer.start(self._interval_spin.value())
         else:
             self._loop_timer.stop()
+
+    def _toggle_mode(self) -> None:
+        self._is_hex_mode = not self._is_hex_mode
+        self._update_mode_btn()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -368,6 +406,17 @@ class SerialPage(QWidget):
     def _clear_recv_box(self) -> None:
         self._recv_box.clear()
 
+    def _update_mode_btn(self) -> None:
+        t = self._tr.tr
+        if self._is_hex_mode:
+            self._mode_btn.setText(t("mode_btn_hex"))
+            self._mode_btn.setStyleSheet(MODE_HEX_STYLE)
+            self._send_input.setPlaceholderText(t("send_input_ph_hex"))
+        else:
+            self._mode_btn.setText(t("mode_btn_str"))
+            self._mode_btn.setStyleSheet(MODE_STR_STYLE)
+            self._send_input.setPlaceholderText(t("send_input_ph_str"))
+
     # ------------------------------------------------------------------
     # i18n
     # ------------------------------------------------------------------
@@ -384,9 +433,8 @@ class SerialPage(QWidget):
         self._signals_label.setText(t("signals_label"))
         self._refresh_btn.setText(t("refresh_btn"))
         self._send_label.setText(t("send_label"))
-        self._send_input.setPlaceholderText(t("send_input_ph"))
         self._send_btn.setText(t("send_btn"))
-        self._hex_chk.setText(t("hex_send_chk"))
+        self._update_mode_btn()  # 更新模式按钮文字和占位符
         self._loop_chk.setText(t("loop_send_chk"))
         self._interval_label.setText(t("loop_interval_lbl"))
         self._recv_label.setText(t("recv_label"))
