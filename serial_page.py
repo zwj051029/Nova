@@ -75,6 +75,7 @@ class SerialPage(QWidget):
         self._worker = worker
         self._tr = Translator()
         self._loop_timer = QTimer(self)
+        self._loop_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._loop_timer.timeout.connect(self._do_send)
         self._tr.on_change(self.retranslate)
         self.on_connection_changed = None  # optional callback(bool)
@@ -220,10 +221,10 @@ class SerialPage(QWidget):
         # input row
         input_row = QHBoxLayout()
         self._send_input = QLineEdit()
-        self._send_input.returnPressed.connect(self._do_send)
+        self._send_input.returnPressed.connect(self._manual_send)
         self._send_btn = QPushButton()
         self._send_btn.setFixedWidth(64)
-        self._send_btn.clicked.connect(self._do_send)
+        self._send_btn.clicked.connect(self._manual_send)
         input_row.addWidget(self._send_input, stretch=1)
         input_row.addWidget(self._send_btn)
         v.addLayout(input_row)
@@ -307,6 +308,7 @@ class SerialPage(QWidget):
         if self._worker.is_open():
             self._loop_timer.stop()
             self._loop_chk.setChecked(False)
+            self._lock_input(False)
             self._worker.close()
             self._update_controls(opened=False)
         else:
@@ -354,6 +356,12 @@ class SerialPage(QWidget):
     # Send
     # ------------------------------------------------------------------
 
+    def _manual_send(self) -> None:
+        """手动发送：停止循环、解锁输入框、发送一次。"""
+        if self._loop_chk.isChecked():
+            self._loop_chk.setChecked(False)  # 触发 _toggle_loop → 停止定时器并解锁
+        self._do_send()
+
     def _do_send(self) -> None:
         if not self._worker.is_open():
             return
@@ -379,8 +387,20 @@ class SerialPage(QWidget):
     def _toggle_loop(self, checked: bool) -> None:
         if checked and self._worker.is_open():
             self._loop_timer.start(self._interval_spin.value())
+            self._lock_input(True)
         else:
             self._loop_timer.stop()
+            self._lock_input(False)
+
+    def _lock_input(self, locked: bool) -> None:
+        self._send_input.setReadOnly(locked)
+        self._send_input.setStyleSheet(
+            "background: #EEEEEE; border: 1px solid #C8D0DC; border-radius: 4px;"
+            if locked else
+            "background: white; border: 1px solid #C8D0DC; border-radius: 4px;"
+        )
+        cursor = Qt.CursorShape.ForbiddenCursor if locked else Qt.CursorShape.IBeamCursor
+        self._send_input.setCursor(cursor)
 
     def _toggle_mode(self) -> None:
         self._is_hex_mode = not self._is_hex_mode
