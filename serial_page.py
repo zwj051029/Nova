@@ -91,15 +91,37 @@ class RefreshButton(QPushButton):
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.setStyleSheet("""
             QPushButton {
-                background: #F5F7FA;
-                border: none;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #FFFFFF, stop:1 #E8ECF2);
+                border-top:    1px solid #FFFFFF;
+                border-left:   1px solid #FFFFFF;
+                border-right:  1px solid #A0A8B8;
+                border-bottom: 1px solid #A0A8B8;
                 border-radius: 16px;
                 font-size: 16px;
-                color: #666666;
+                color: #4A5568;
             }
-            QPushButton:hover   { background: #E5E6EB; color: #333333; }
-            QPushButton:pressed { background: #DCDFE6; }
-            QPushButton:disabled { background: #E5E6EB; color: #BBBBBB; }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #FFFFFF, stop:1 #D0D8E8);
+                color: #165DFF;
+                border-right:  1px solid #8090A8;
+                border-bottom: 1px solid #8090A8;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #D0D8E8, stop:1 #FFFFFF);
+                border-top:    1px solid #A0A8B8;
+                border-left:   1px solid #A0A8B8;
+                border-right:  1px solid #FFFFFF;
+                border-bottom: 1px solid #FFFFFF;
+                color: #165DFF;
+            }
+            QPushButton:disabled {
+                background: #F0F0F0;
+                border: 1px solid #D0D0D0;
+                color: #BBBBBB;
+            }
         """)
         self._frame = 0
         self._spin_timer = QTimer(self)
