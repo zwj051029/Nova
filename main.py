@@ -110,7 +110,7 @@ QSlider::sub-page:horizontal {
 QSplitter::handle {
     background: #E5E8EB;
 }
-QSplitter::handle:horizontal { width: 3px; }
+QSplitter::handle:horizontal { width: 5px; }
 QSplitter::handle:vertical   { height: 3px; }
 QStatusBar {
     background: #F7F8FA;

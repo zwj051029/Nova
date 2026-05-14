@@ -58,7 +58,7 @@ QPushButton:hover   { background-color: #E09515; }
 QPushButton:pressed { background-color: #C8840A; }
 """
 
-_MONO_FONT = QFont("Consolas", 9)
+_MONO_FONT = QFont("Consolas", 11)  # ~14-15px
 
 # 统一文本框边框样式
 _BOX_STYLE_SEND = (
@@ -121,8 +121,8 @@ class SerialPage(QWidget):
 
     def _build_left_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setMinimumWidth(160)
-        panel.setMaximumWidth(320)
+        panel.setMinimumWidth(180)
+        panel.setMaximumWidth(480)
         panel.setStyleSheet(
             "background: #FAFBFC;"
             "border-right: 1px solid #E5E8EB;"
@@ -133,31 +133,61 @@ class SerialPage(QWidget):
         v.setSpacing(0)
 
         self._config_group = QGroupBox()
-        grid = QGridLayout(self._config_group)
-        grid.setSpacing(6)
-        grid.setColumnStretch(1, 1)
+        group_layout = QVBoxLayout(self._config_group)
+        group_layout.setContentsMargins(8, 14, 8, 8)
+        group_layout.setSpacing(0)
 
-        # helpers
+        # 标签列和控件列用内嵌 splitter 分隔，可拖动调整列宽
+        col_splitter = QSplitter(Qt.Orientation.Horizontal)
+        col_splitter.setHandleWidth(4)
+
+        lbl_widget = QWidget()
+        lbl_grid = QGridLayout(lbl_widget)
+        lbl_grid.setSpacing(8)
+        lbl_grid.setContentsMargins(4, 0, 0, 0)
+
+        ctrl_widget = QWidget()
+        ctrl_grid = QGridLayout(ctrl_widget)
+        ctrl_grid.setSpacing(8)
+        ctrl_grid.setContentsMargins(0, 0, 4, 0)
+        ctrl_grid.setColumnStretch(0, 1)
+
+        col_splitter.addWidget(lbl_widget)
+        col_splitter.addWidget(ctrl_widget)
+        col_splitter.setStretchFactor(0, 0)
+        col_splitter.setStretchFactor(1, 1)
+        col_splitter.setSizes([64, 200])
+        group_layout.addWidget(col_splitter)
+
+        # helpers — 标签放 lbl_grid，控件放 ctrl_grid
         def row(label_attr, combo_attr, items, default=None, r=0):
             lbl = QLabel()
+            lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             setattr(self, label_attr, lbl)
             cb = QComboBox()
             cb.addItems(items)
             if default:
                 cb.setCurrentText(default)
             setattr(self, combo_attr, cb)
-            grid.addWidget(lbl, r, 0)
-            grid.addWidget(cb, r, 1)
+            lbl_grid.addWidget(lbl, r, 0)
+            ctrl_grid.addWidget(cb, r, 0)
 
         # port row (with refresh button)
         self._port_label = QLabel()
+        self._port_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self._port_combo = QComboBox()
         self._refresh_btn = QPushButton()
         self._refresh_btn.setFixedWidth(44)
         self._refresh_btn.clicked.connect(self.refresh_ports)
-        grid.addWidget(self._port_label, 0, 0)
-        grid.addWidget(self._port_combo, 0, 1)
-        grid.addWidget(self._refresh_btn, 0, 2)
+        lbl_grid.addWidget(self._port_label, 0, 0)
+        port_row = QHBoxLayout()
+        port_row.setSpacing(4)
+        port_row.setContentsMargins(0, 0, 0, 0)
+        port_row.addWidget(self._port_combo, stretch=1)
+        port_row.addWidget(self._refresh_btn)
+        port_container = QWidget()
+        port_container.setLayout(port_row)
+        ctrl_grid.addWidget(port_container, 0, 0)
 
         row("_baud_label",      "_baud_combo",
             ["1200","2400","4800","9600","19200","38400","57600","115200","230400","460800","921600"],
@@ -171,9 +201,10 @@ class SerialPage(QWidget):
         row("_stopbits_label",  "_stopbits_combo",
             ["1", "1.5", "2"], "1", r=5)
 
-        # control signals
+        # control signals — 跨两列，放在 group_layout 下方
         self._signals_label = QLabel()
-        grid.addWidget(self._signals_label, 6, 0, 1, 3)
+        group_layout.addSpacing(4)
+        group_layout.addWidget(self._signals_label)
 
         sig_row = QHBoxLayout()
         self._dtr_chk = QCheckBox("DTR")
@@ -184,7 +215,7 @@ class SerialPage(QWidget):
         sig_row.addStretch()
         sig_widget = QWidget()
         sig_widget.setLayout(sig_row)
-        grid.addWidget(sig_widget, 7, 0, 1, 3)
+        group_layout.addWidget(sig_widget)
 
         v.addWidget(self._config_group)
 
@@ -243,6 +274,7 @@ class SerialPage(QWidget):
         # input row
         input_row = QHBoxLayout()
         self._send_input = QLineEdit()
+        self._send_input.setFont(_MONO_FONT)
         self._send_input.returnPressed.connect(self._manual_send)
         self._send_btn = QPushButton()
         self._send_btn.setFixedWidth(64)
