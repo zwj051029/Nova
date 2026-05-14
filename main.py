@@ -1,5 +1,4 @@
 import sys
-import random
 import threading
 import collections
 import serial
@@ -12,12 +11,10 @@ from PySide6.QtWidgets import (
     QSplitter, QGroupBox, QSlider, QDoubleSpinBox,
     QGridLayout,
 )
-from PySide6.QtCore import QObject, Signal, Qt, QTimer
+from PySide6.QtCore import QObject, Signal, Qt
 from PySide6.QtGui import QPalette, QColor
 
 BUFFER_SIZE = 500
-PLOT_INTERVAL_MS = 20
-DEBUG_INTERVAL_MS = 1000
 
 BTN_GREEN_STYLE = """
     QPushButton {
@@ -30,6 +27,19 @@ BTN_GREEN_STYLE = """
     QPushButton:pressed { background-color: #388E3C; }
     QPushButton:disabled { background-color: #A5D6A7; }
 """
+
+
+def parse_line(line: str) -> tuple[int, float, float, float] | None:
+    """解析 '>id,setpoint,actual,output' 格式，失败返回 None。"""
+    if not line.startswith(">"):
+        return None
+    try:
+        parts = line[1:].split(",")
+        if len(parts) != 4:
+            return None
+        return int(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])
+    except ValueError:
+        return None
 
 
 class SerialReader(QObject):
@@ -72,8 +82,6 @@ class SerialReader(QObject):
 
 
 class PidRow:
-    """一行 PID 控件：标签 + 滑块 + SpinBox + 发送按钮。"""
-
     def __init__(self, name: str, layout: QGridLayout, row: int):
         self.name = name
         self._syncing = False
@@ -134,16 +142,14 @@ class MainWindow(QMainWindow):
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
-        self._buffer: collections.deque[float] = collections.deque(
-            [0.0] * BUFFER_SIZE, maxlen=BUFFER_SIZE
-        )
+        self._buf_setpoint: collections.deque[float] = collections.deque(maxlen=BUFFER_SIZE)
+        self._buf_actual: collections.deque[float] = collections.deque(maxlen=BUFFER_SIZE)
 
         self._reader = SerialReader()
-        self._reader.line_received.connect(self._append_line)
+        self._reader.line_received.connect(self._on_line_received)
 
         self._build_ui()
         self._refresh_ports()
-        self._start_timers()
 
         print(f"窗口实际尺寸: {self.size().width()} x {self.size().height()}")
         print("窗口创建成功")
@@ -173,7 +179,6 @@ class MainWindow(QMainWindow):
         left_layout.setSpacing(8)
         left_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # 串口设置
         left_layout.addWidget(QLabel("串口号"))
         self._port_combo = QComboBox()
         left_layout.addWidget(self._port_combo)
@@ -192,9 +197,7 @@ class MainWindow(QMainWindow):
         self._toggle_btn.clicked.connect(self._toggle_serial)
         left_layout.addWidget(self._toggle_btn)
 
-        # PID 参数分组
         left_layout.addWidget(self._build_pid_group())
-
         left_layout.addStretch()
         return left
 
@@ -241,37 +244,22 @@ class MainWindow(QMainWindow):
         pw.showGrid(x=True, y=True, alpha=0.3)
         pw.setLabel("left", "数值")
         pw.setLabel("bottom", "采样点")
-        pw.setYRange(0, 100)
+        pw.enableAutoRange()
 
-        self._curve = pw.plot(
-            list(self._buffer),
-            pen=pg.mkPen(color="#1E90FF", width=2),
+        pw.addLegend(offset=(10, 10))
+
+        self._curve_setpoint = pw.plot(
+            [], name="目标值",
+            pen=pg.mkPen(color="#2ECC71", width=2, style=Qt.PenStyle.DashLine),
+        )
+        self._curve_actual = pw.plot(
+            [], name="实际值",
+            pen=pg.mkPen(color="#E74C3C", width=2),
         )
         return pw
 
     # ------------------------------------------------------------------
-    # Timers
-    # ------------------------------------------------------------------
-
-    def _start_timers(self) -> None:
-        self._plot_timer = QTimer(self)
-        self._plot_timer.timeout.connect(self._update_plot)
-        self._plot_timer.start(PLOT_INTERVAL_MS)
-
-        self._debug_timer = QTimer(self)
-        self._debug_timer.timeout.connect(self._debug_print)
-        self._debug_timer.start(DEBUG_INTERVAL_MS)
-
-    def _update_plot(self) -> None:
-        self._buffer.append(random.uniform(0, 100))
-        self._curve.setData(list(self._buffer))
-
-    def _debug_print(self) -> None:
-        latest = self._buffer[-1]
-        print(f"[调试] 缓冲区样本数: {len(self._buffer)}  最新值: {latest:.2f}")
-
-    # ------------------------------------------------------------------
-    # Serial
+    # Serial & data
     # ------------------------------------------------------------------
 
     def _refresh_ports(self) -> None:
@@ -288,11 +276,13 @@ class MainWindow(QMainWindow):
         if self._reader.is_open():
             self._reader.close()
             self._update_controls(opened=False)
+            self._clear_plot()
             print("串口已关闭")
         else:
             port = self._port_combo.currentText()
             baudrate = int(self._baud_combo.currentText())
             try:
+                self._clear_plot()
                 self._reader.open(port, baudrate)
                 self._update_controls(opened=True)
                 print(f"串口已打开: {port} @ {baudrate}")
@@ -305,12 +295,28 @@ class MainWindow(QMainWindow):
         self._baud_combo.setEnabled(not opened)
         self._refresh_btn.setEnabled(not opened)
 
-    def _append_line(self, line: str) -> None:
+    def _clear_plot(self) -> None:
+        self._buf_setpoint.clear()
+        self._buf_actual.clear()
+        self._curve_setpoint.setData([])
+        self._curve_actual.setData([])
+
+    def _on_line_received(self, line: str) -> None:
         self._text_box.appendPlainText(line)
 
+        parsed = parse_line(line)
+        if parsed is None:
+            return
+
+        _, setpoint, actual, _ = parsed
+        self._buf_setpoint.append(setpoint)
+        self._buf_actual.append(actual)
+        self._curve_setpoint.setData(list(self._buf_setpoint))
+        self._curve_actual.setData(list(self._buf_actual))
+
+        print(f"[调试] setpoint={setpoint:.2f}  actual={actual:.2f}  buf={len(self._buf_actual)}")
+
     def closeEvent(self, event) -> None:
-        self._plot_timer.stop()
-        self._debug_timer.stop()
         self._reader.close()
         super().closeEvent(event)
 
