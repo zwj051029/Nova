@@ -1,13 +1,17 @@
 import serial
 import serial.tools.list_ports
+import threading
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QLabel, QComboBox, QPushButton, QGroupBox,
     QLineEdit, QCheckBox, QSpinBox, QPlainTextEdit,
     QGridLayout,
 )
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat
+from PySide6.QtCore import Qt, QTimer, QObject, Signal
+from PySide6.QtGui import (
+    QFont, QColor, QTextCursor, QTextCharFormat,
+    QKeySequence, QCursor, QShortcut,
+)
 
 from i18n import Translator
 from serial_worker import SerialWorker
@@ -41,10 +45,8 @@ QPushButton:hover   { background-color: #C94444; }
 QPushButton:pressed { background-color: #B03333; }
 """
 
-# 字符串模式：默认绿色（继承全局）
 MODE_STR_STYLE = ""
 
-# 十六进制模式：橙黄色提醒
 MODE_HEX_STYLE = """
 QPushButton {
     background-color: #F5A623;
@@ -58,9 +60,8 @@ QPushButton:hover   { background-color: #E09515; }
 QPushButton:pressed { background-color: #C8840A; }
 """
 
-_MONO_FONT = QFont("Consolas", 11)  # ~14-15px
+_MONO_FONT = QFont("Consolas", 11)
 
-# 统一文本框边框样式
 _BOX_STYLE_SEND = (
     "background: #F0F8FF;"
     "border: 1px solid #E5E8EB;"
@@ -73,6 +74,77 @@ _BOX_STYLE_RECV = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Rotating refresh button
+# ---------------------------------------------------------------------------
+
+# 8 帧箭头字符模拟旋转
+_SPIN_FRAMES = ["↻", "↷", "↶", "↺", "↻", "↷", "↶", "↺"]
+
+class RefreshButton(QPushButton):
+    """圆形刷新按钮，用 QTimer 帧切换模拟旋转动画。"""
+
+    def __init__(self, parent=None):
+        super().__init__("↻", parent)
+        self.setFixedSize(32, 32)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setStyleSheet("""
+            QPushButton {
+                background: #F5F7FA;
+                border: none;
+                border-radius: 16px;
+                font-size: 16px;
+                color: #666666;
+            }
+            QPushButton:hover   { background: #E5E6EB; color: #333333; }
+            QPushButton:pressed { background: #DCDFE6; }
+            QPushButton:disabled { background: #E5E6EB; color: #BBBBBB; }
+        """)
+        self._frame = 0
+        self._spin_timer = QTimer(self)
+        self._spin_timer.setInterval(80)  # ~12fps, 8帧 ≈ 1圈/秒
+        self._spin_timer.timeout.connect(self._next_frame)
+
+    def _next_frame(self) -> None:
+        self._frame = (self._frame + 1) % len(_SPIN_FRAMES)
+        self.setText(_SPIN_FRAMES[self._frame])
+
+    def start_spin(self) -> None:
+        self._frame = 0
+        self.setEnabled(False)
+        self.setToolTip("")
+        self._spin_timer.start()
+
+    def stop_spin(self) -> None:
+        self._spin_timer.stop()
+        self.setText("↻")
+        self.setEnabled(True)
+
+
+# ---------------------------------------------------------------------------
+# Background port scanner
+# ---------------------------------------------------------------------------
+
+class _PortScanner(QObject):
+    finished = Signal(list, str)  # (ports, error_msg)
+
+    def scan(self) -> None:
+        t = threading.Thread(target=self._run, daemon=True)
+        t.start()
+
+    def _run(self) -> None:
+        try:
+            ports = [p.device for p in serial.tools.list_ports.comports()]
+            self.finished.emit(ports, "")
+        except Exception as e:
+            self.finished.emit([], str(e))
+
+
+# ---------------------------------------------------------------------------
+# SerialPage
+# ---------------------------------------------------------------------------
+
 class SerialPage(QWidget):
     """
     串口收发页面。
@@ -83,7 +155,6 @@ class SerialPage(QWidget):
       │  配置面板     ├──────────────────────────────┤
       │              │  右下：接收区（可拖拽）         │
       └──────────────┴──────────────────────────────┘
-    左右、右侧上下均可通过鼠标拖拽调整大小。
     """
 
     def __init__(self, worker: SerialWorker, parent=None):
@@ -94,9 +165,19 @@ class SerialPage(QWidget):
         self._loop_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._loop_timer.timeout.connect(self._do_send)
         self._tr.on_change(self.retranslate)
-        self.on_connection_changed = None  # optional callback(bool)
-        self.on_data_sent = None           # optional callback()
+        self.on_connection_changed = None  # callback(bool)
+        self.on_data_sent = None           # callback()
+        self.on_toast = None               # callback(str, bool)  msg, success
+
+        self._scanner = _PortScanner()
+        self._scanner.finished.connect(self._on_scan_finished)
+
         self._build_ui()
+
+        # F5 shortcut
+        sc = QShortcut(QKeySequence(Qt.Key.Key_F5), self)
+        sc.activated.connect(self._trigger_refresh)
+
         self.retranslate()
 
     # ------------------------------------------------------------------
@@ -137,7 +218,6 @@ class SerialPage(QWidget):
         group_layout.setContentsMargins(8, 14, 8, 8)
         group_layout.setSpacing(0)
 
-        # 标签列和控件列用内嵌 splitter 分隔，可拖动调整列宽
         col_splitter = QSplitter(Qt.Orientation.Horizontal)
         col_splitter.setHandleWidth(4)
 
@@ -159,7 +239,6 @@ class SerialPage(QWidget):
         col_splitter.setSizes([64, 200])
         group_layout.addWidget(col_splitter)
 
-        # helpers — 标签放 lbl_grid，控件放 ctrl_grid
         def row(label_attr, combo_attr, items, default=None, r=0):
             lbl = QLabel()
             lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
@@ -172,13 +251,12 @@ class SerialPage(QWidget):
             lbl_grid.addWidget(lbl, r, 0)
             ctrl_grid.addWidget(cb, r, 0)
 
-        # port row (with refresh button)
+        # port row with round refresh button
         self._port_label = QLabel()
         self._port_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self._port_combo = QComboBox()
-        self._refresh_btn = QPushButton()
-        self._refresh_btn.setFixedWidth(44)
-        self._refresh_btn.clicked.connect(self.refresh_ports)
+        self._refresh_btn = RefreshButton()
+        self._refresh_btn.clicked.connect(self._trigger_refresh)
         lbl_grid.addWidget(self._port_label, 0, 0)
         port_row = QHBoxLayout()
         port_row.setSpacing(4)
@@ -189,19 +267,18 @@ class SerialPage(QWidget):
         port_container.setLayout(port_row)
         ctrl_grid.addWidget(port_container, 0, 0)
 
-        row("_baud_label",      "_baud_combo",
+        row("_baud_label", "_baud_combo",
             ["1200","2400","4800","9600","19200","38400","57600","115200","230400","460800","921600"],
             "115200", r=1)
-        row("_flow_label",      "_flow_combo",
+        row("_flow_label", "_flow_combo",
             ["None", "XON/XOFF", "RTS/CTS", "DSR/DTR"], r=2)
-        row("_parity_label",    "_parity_combo",
+        row("_parity_label", "_parity_combo",
             ["None", "Even", "Odd", "Mark", "Space"], r=3)
-        row("_bytesize_label",  "_bytesize_combo",
+        row("_bytesize_label", "_bytesize_combo",
             ["5", "6", "7", "8"], "8", r=4)
-        row("_stopbits_label",  "_stopbits_combo",
+        row("_stopbits_label", "_stopbits_combo",
             ["1", "1.5", "2"], "1", r=5)
 
-        # control signals — 跨两列，放在 group_layout 下方
         self._signals_label = QLabel()
         group_layout.addSpacing(4)
         group_layout.addWidget(self._signals_label)
@@ -219,7 +296,6 @@ class SerialPage(QWidget):
 
         v.addWidget(self._config_group)
 
-        # connect button
         self._toggle_btn = QPushButton()
         self._toggle_btn.setMinimumHeight(40)
         self._toggle_btn.setStyleSheet(BTN_OPEN_STYLE)
@@ -252,7 +328,6 @@ class SerialPage(QWidget):
         v.setContentsMargins(12, 12, 12, 8)
         v.setSpacing(8)
 
-        # header row
         hdr = QHBoxLayout()
         self._send_label = QLabel()
         self._send_label.setStyleSheet("font-weight: bold; color: #555;")
@@ -264,14 +339,12 @@ class SerialPage(QWidget):
         hdr.addWidget(self._clear_send_btn)
         v.addLayout(hdr)
 
-        # send log (read-only, shows [TX] lines)
         self._send_box = QPlainTextEdit()
         self._send_box.setReadOnly(True)
         self._send_box.setFont(_MONO_FONT)
         self._send_box.setStyleSheet(_BOX_STYLE_SEND)
         v.addWidget(self._send_box, stretch=1)
 
-        # input row
         input_row = QHBoxLayout()
         self._send_input = QLineEdit()
         self._send_input.setFont(_MONO_FONT)
@@ -283,8 +356,7 @@ class SerialPage(QWidget):
         input_row.addWidget(self._send_btn)
         v.addLayout(input_row)
 
-        # options row
-        self._is_hex_mode = False  # False = string, True = hex
+        self._is_hex_mode = False
 
         self._mode_btn = QPushButton()
         self._mode_btn.setFixedWidth(100)
@@ -296,7 +368,7 @@ class SerialPage(QWidget):
         self._interval_spin = QSpinBox()
         self._interval_spin.setRange(50, 60000)
         self._interval_spin.setValue(1000)
-        self._interval_spin.setMinimumWidth(90)  # 防止数字与箭头重叠
+        self._interval_spin.setMinimumWidth(90)
 
         self._interval_label = QLabel()
 
@@ -337,7 +409,7 @@ class SerialPage(QWidget):
         return panel
 
     # ------------------------------------------------------------------
-    # Public API for main window to push received data
+    # Public API
     # ------------------------------------------------------------------
 
     def append_received(self, line: str) -> None:
@@ -353,19 +425,85 @@ class SerialPage(QWidget):
             return 115200
 
     # ------------------------------------------------------------------
-    # Serial control
+    # Refresh ports
     # ------------------------------------------------------------------
 
     def refresh_ports(self) -> None:
-        self._port_combo.clear()
+        """Synchronous refresh used on startup (before UI is shown)."""
         ports = [p.device for p in serial.tools.list_ports.comports()]
+        self._apply_ports(ports)
+
+    def _trigger_refresh(self) -> None:
+        """Async refresh triggered by button or F5."""
+        if self._worker.is_open():
+            return
+        self._prev_ports = set(
+            self._port_combo.itemText(i) for i in range(self._port_combo.count())
+            if self._port_combo.itemText(i) != self._tr.tr("no_port")
+        )
+        self._prev_selection = self._port_combo.currentText()
+        self._refresh_btn.start_spin()
+        self._scanner.scan()
+
+    def _on_scan_finished(self, ports: list, error: str) -> None:
+        self._refresh_btn.stop_spin()
+        self._refresh_btn.setToolTip(self._tr.tr("refresh_tooltip"))
+
+        if error:
+            msg = self._tr.tr("toast_refresh_fail") + "：" + error
+            if self.on_toast:
+                self.on_toast(msg, False)
+            return
+
+        prev = getattr(self, "_prev_ports", set())
+        prev_sel = getattr(self, "_prev_selection", "")
+        new_ports = set(ports) - prev
+
+        self._apply_ports(ports, prev_sel, highlight=new_ports)
+
+        t = self._tr.tr
+        if new_ports or set(ports) != prev:
+            msg = t("toast_refresh_ok_found").format(n=len(ports)) if ports else t("toast_refresh_ok")
+        else:
+            msg = t("toast_refresh_ok")
+        if self.on_toast:
+            self.on_toast(msg, True)
+
+    def _apply_ports(self, ports: list, restore_sel: str = "",
+                     highlight: set = None) -> None:
+        self._port_combo.clear()
         if ports:
             self._port_combo.addItems(ports)
+            if restore_sel and restore_sel in ports:
+                self._port_combo.setCurrentText(restore_sel)
             self._toggle_btn.setEnabled(True)
+            self._toggle_btn.setText(self._tr.tr("open_port"))
+
+            if highlight:
+                from PySide6.QtGui import QStandardItem
+                from PySide6.QtCore import QTimer as _QTimer
+                model = self._port_combo.model()
+                highlighted_rows = []
+                for i in range(model.rowCount()):
+                    item = model.item(i)
+                    if item and item.text() in highlight:
+                        item.setBackground(QColor("#E8FFEA"))
+                        highlighted_rows.append(i)
+
+                def _clear_highlight():
+                    for r in highlighted_rows:
+                        it = model.item(r)
+                        if it:
+                            it.setBackground(QColor("transparent"))
+                _QTimer.singleShot(1500, _clear_highlight)
         else:
             self._port_combo.addItem(self._tr.tr("no_port"))
             self._toggle_btn.setEnabled(False)
             self._toggle_btn.setText(self._tr.tr("no_port_available"))
+
+    # ------------------------------------------------------------------
+    # Serial control
+    # ------------------------------------------------------------------
 
     def _toggle_serial(self) -> None:
         t = self._tr.tr
@@ -421,9 +559,8 @@ class SerialPage(QWidget):
     # ------------------------------------------------------------------
 
     def _manual_send(self) -> None:
-        """手动发送：停止循环、解锁输入框、发送一次。"""
         if self._loop_chk.isChecked():
-            self._loop_chk.setChecked(False)  # 触发 _toggle_loop → 停止定时器并解锁
+            self._loop_chk.setChecked(False)
         self._do_send()
 
     def _do_send(self) -> None:
@@ -448,7 +585,6 @@ class SerialPage(QWidget):
         self._append_to(self._send_box, display, "#1565C0")
         if self.on_data_sent:
             self.on_data_sent()
-        # do NOT clear input — user keeps it for repeated sends
 
     def _toggle_loop(self, checked: bool) -> None:
         if checked and self._worker.is_open():
@@ -517,10 +653,10 @@ class SerialPage(QWidget):
         self._bytesize_label.setText(t("bytesize_label"))
         self._stopbits_label.setText(t("stopbits_label"))
         self._signals_label.setText(t("signals_label"))
-        self._refresh_btn.setText(t("refresh_btn"))
+        self._refresh_btn.setToolTip(t("refresh_tooltip"))
         self._send_label.setText(t("send_label"))
         self._send_btn.setText(t("send_btn"))
-        self._update_mode_btn()  # 更新模式按钮文字和占位符
+        self._update_mode_btn()
         self._loop_chk.setText(t("loop_send_chk"))
         self._interval_label.setText(t("loop_interval_lbl"))
         self._recv_label.setText(t("recv_label"))

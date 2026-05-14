@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QVBoxLayout, QPushButton,
     QStackedWidget, QStatusBar, QLabel, QFrame,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint
 from PySide6.QtGui import QPalette, QColor, QAction
 
 from i18n import Translator
@@ -134,6 +134,69 @@ QPushButton:checked { background-color: #165DFF; color: white; font-weight: bold
 """
 
 
+# ---------------------------------------------------------------------------
+# Toast notification
+# ---------------------------------------------------------------------------
+
+class ToastWidget(QWidget):
+    """顶部居中浮层提示，显示 2 秒后自动淡出。"""
+
+    def __init__(self, message: str, success: bool, parent: QWidget):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(8)
+
+        icon_lbl = QLabel("✓" if success else "✗")
+        icon_lbl.setStyleSheet(
+            f"color: {'#00B42A' if success else '#F53F3F'};"
+            "font-size: 14px; font-weight: bold;"
+        )
+        msg_lbl = QLabel(message)
+        msg_lbl.setStyleSheet("color: #1D2129; font-size: 14px;")
+        msg_lbl.setMinimumWidth(88)
+        msg_lbl.setMaximumWidth(268)
+
+        layout.addWidget(icon_lbl)
+        layout.addWidget(msg_lbl)
+
+        self.setStyleSheet("""
+            ToastWidget {
+                background-color: white;
+                border: 1px solid #E5E8EB;
+                border-radius: 8px;
+            }
+        """)
+
+        self.adjustSize()
+        self._position_center(parent)
+        self.raise_()
+        self.show()
+
+        self._fade_anim = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._fade_anim.setDuration(300)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.start()
+
+        QTimer.singleShot(2000, self._start_fade_out)
+
+    def _position_center(self, parent: QWidget) -> None:
+        x = (parent.width() - self.width()) // 2
+        self.move(x, 20)
+
+    def _start_fade_out(self) -> None:
+        self._fade_anim.setDuration(300)
+        self._fade_anim.setStartValue(1.0)
+        self._fade_anim.setEndValue(0.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.Type.InCubic)
+        self._fade_anim.finished.connect(self.close)
+        self._fade_anim.start()
+
+
 class _StatusIndicator(QWidget):
     """状态栏内容 widget。"""
 
@@ -251,6 +314,7 @@ class MainWindow(QMainWindow):
         self._serial_page = SerialPage(self._worker)
         self._serial_page.on_connection_changed = self._on_connection_changed
         self._serial_page.on_data_sent = self._on_data_sent
+        self._serial_page.on_toast = self._show_toast
         self._pid_page = PidPage(self._worker)
         self._stack.addWidget(self._serial_page)   # index 0
         self._stack.addWidget(self._pid_page)       # index 1
@@ -321,6 +385,9 @@ class MainWindow(QMainWindow):
 
     def _on_data_sent(self) -> None:
         self._status_indicator.update_tx(self._tr.tr, self._worker.tx_bytes)
+
+    def _show_toast(self, message: str, success: bool) -> None:
+        ToastWidget(message, success, self.centralWidget())
 
     def _on_connection_changed(self, opened: bool) -> None:
         self._pid_page.set_send_enabled(opened)
