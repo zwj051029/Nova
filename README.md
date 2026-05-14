@@ -1,4 +1,4 @@
-# 🎛️ PID Tuner — PID 调试助手
+# 🎛️ Nova — PID 调试助手
 
 > 一个基于 **PySide6 + pyqtgraph + pyserial** 的跨平台 PID 调参上位机。  
 > 协议简洁，嵌入式端一行 `printf` 即可对接，开箱即用。
@@ -12,9 +12,7 @@
 
 ## 📸 界面截图
 
-> 🖼️ *截图待添加 — 请将截图放入 `docs/screenshot.png` 并取消下方注释*
-
-<!-- ![界面截图](docs/screenshot.png) -->
+> 🖼️ ![alt text](image1.png)
 
 ---
 
