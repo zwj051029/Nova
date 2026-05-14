@@ -1,14 +1,22 @@
 import sys
+import random
 import threading
+import collections
 import serial
 import serial.tools.list_ports
+import pyqtgraph as pg
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QHBoxLayout, QVBoxLayout, QComboBox,
     QLabel, QPushButton, QPlainTextEdit,
+    QSplitter,
 )
-from PySide6.QtCore import QObject, Signal, Qt
+from PySide6.QtCore import QObject, Signal, Qt, QTimer
 from PySide6.QtGui import QPalette, QColor
+
+BUFFER_SIZE = 500
+PLOT_INTERVAL_MS = 20   # 波形刷新间隔
+DEBUG_INTERVAL_MS = 1000  # 调试打印间隔
 
 
 class SerialReader(QObject):
@@ -61,14 +69,23 @@ class MainWindow(QMainWindow):
         self.setPalette(palette)
         self.setAutoFillBackground(True)
 
+        self._buffer: collections.deque[float] = collections.deque(
+            [0.0] * BUFFER_SIZE, maxlen=BUFFER_SIZE
+        )
+
         self._reader = SerialReader()
         self._reader.line_received.connect(self._append_line)
 
         self._build_ui()
         self._refresh_ports()
+        self._start_timers()
 
         print(f"窗口实际尺寸: {self.size().width()} x {self.size().height()}")
         print("窗口创建成功")
+
+    # ------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -106,15 +123,63 @@ class MainWindow(QMainWindow):
 
         left_layout.addStretch()
 
-        # --- right panel ---
+        # --- right panel: plot + text in a splitter ---
+        self._plot_widget = self._build_plot()
+
         self._text_box = QPlainTextEdit()
         self._text_box.setReadOnly(True)
         self._text_box.setPlaceholderText("等待串口数据…")
 
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self._plot_widget)
+        splitter.addWidget(self._text_box)
+        splitter.setStretchFactor(0, 7)
+        splitter.setStretchFactor(1, 3)
+
         layout.addWidget(left)
-        layout.addWidget(self._text_box, stretch=1)
+        layout.addWidget(splitter, stretch=1)
 
         self._update_controls(opened=False)
+
+    def _build_plot(self) -> pg.PlotWidget:
+        pw = pg.PlotWidget()
+        pw.setBackground("w")
+
+        pw.showGrid(x=True, y=True, alpha=0.3)
+        pw.setLabel("left", "数值")
+        pw.setLabel("bottom", "采样点")
+        pw.setYRange(0, 100)
+
+        self._curve = pw.plot(
+            list(self._buffer),
+            pen=pg.mkPen(color="#1E90FF", width=2),
+        )
+        return pw
+
+    # ------------------------------------------------------------------
+    # Timers
+    # ------------------------------------------------------------------
+
+    def _start_timers(self) -> None:
+        self._plot_timer = QTimer(self)
+        self._plot_timer.timeout.connect(self._update_plot)
+        self._plot_timer.start(PLOT_INTERVAL_MS)
+
+        self._debug_timer = QTimer(self)
+        self._debug_timer.timeout.connect(self._debug_print)
+        self._debug_timer.start(DEBUG_INTERVAL_MS)
+
+    def _update_plot(self) -> None:
+        self._buffer.append(random.uniform(0, 100))
+        self._curve.setData(list(self._buffer))
+
+    def _debug_print(self) -> None:
+        latest = self._buffer[-1]
+        print(f"[调试] 缓冲区样本数: {len(self._buffer)}  最新值: {latest:.2f}")
+
+    # ------------------------------------------------------------------
+    # Serial
+    # ------------------------------------------------------------------
 
     def _refresh_ports(self) -> None:
         self._port_combo.clear()
@@ -151,6 +216,8 @@ class MainWindow(QMainWindow):
         self._text_box.appendPlainText(line)
 
     def closeEvent(self, event) -> None:
+        self._plot_timer.stop()
+        self._debug_timer.stop()
         self._reader.close()
         super().closeEvent(event)
 
