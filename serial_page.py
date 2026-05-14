@@ -14,7 +14,7 @@ from serial_worker import SerialWorker
 
 BTN_OPEN_STYLE = """
 QPushButton {
-    background-color: #4A90D9;
+    background-color: #165DFF;
     color: white;
     border: none;
     border-radius: 8px;
@@ -22,8 +22,8 @@ QPushButton {
     font-size: 14px;
     font-weight: bold;
 }
-QPushButton:hover   { background-color: #3A7BC8; }
-QPushButton:pressed { background-color: #2E6AB0; }
+QPushButton:hover   { background-color: #0E4BD7; }
+QPushButton:pressed { background-color: #0A3AB0; }
 QPushButton:disabled { background-color: #D0D0D0; color: #888888; }
 """
 
@@ -63,13 +63,13 @@ _MONO_FONT = QFont("Consolas", 9)
 # 统一文本框边框样式
 _BOX_STYLE_SEND = (
     "background: #F0F8FF;"
-    "border: 1px solid #C8D0DC;"
-    "border-radius: 4px;"
+    "border: 1px solid #E5E8EB;"
+    "border-radius: 6px;"
 )
 _BOX_STYLE_RECV = (
-    "background: #FAFAFA;"
-    "border: 1px solid #C8D0DC;"
-    "border-radius: 4px;"
+    "background: #FAFBFC;"
+    "border: 1px solid #E5E8EB;"
+    "border-radius: 6px;"
 )
 
 
@@ -95,6 +95,7 @@ class SerialPage(QWidget):
         self._loop_timer.timeout.connect(self._do_send)
         self._tr.on_change(self.retranslate)
         self.on_connection_changed = None  # optional callback(bool)
+        self.on_data_sent = None           # optional callback()
         self._build_ui()
         self.retranslate()
 
@@ -122,10 +123,13 @@ class SerialPage(QWidget):
         panel = QWidget()
         panel.setMinimumWidth(160)
         panel.setMaximumWidth(320)
-        panel.setStyleSheet("background: white; border-right: 1px solid #D0D8E4;")
+        panel.setStyleSheet(
+            "background: #FAFBFC;"
+            "border-right: 1px solid #E5E8EB;"
+        )
 
         v = QVBoxLayout(panel)
-        v.setContentsMargins(10, 10, 10, 10)
+        v.setContentsMargins(10, 12, 10, 12)
         v.setSpacing(0)
 
         self._config_group = QGroupBox()
@@ -214,8 +218,8 @@ class SerialPage(QWidget):
     def _build_send_panel(self) -> QWidget:
         panel = QWidget()
         v = QVBoxLayout(panel)
-        v.setContentsMargins(8, 8, 8, 4)
-        v.setSpacing(4)
+        v.setContentsMargins(12, 12, 12, 8)
+        v.setSpacing(8)
 
         # header row
         hdr = QHBoxLayout()
@@ -279,8 +283,8 @@ class SerialPage(QWidget):
     def _build_recv_panel(self) -> QWidget:
         panel = QWidget()
         v = QVBoxLayout(panel)
-        v.setContentsMargins(8, 4, 8, 8)
-        v.setSpacing(4)
+        v.setContentsMargins(12, 8, 12, 12)
+        v.setSpacing(8)
 
         hdr = QHBoxLayout()
         self._recv_label = QLabel()
@@ -306,6 +310,15 @@ class SerialPage(QWidget):
 
     def append_received(self, line: str) -> None:
         self._append_to(self._recv_box, line, "#2E7D32")
+
+    def current_port(self) -> str:
+        return self._port_combo.currentText()
+
+    def current_baud(self) -> int:
+        try:
+            return int(self._baud_combo.currentText())
+        except ValueError:
+            return 115200
 
     # ------------------------------------------------------------------
     # Serial control
@@ -401,6 +414,8 @@ class SerialPage(QWidget):
 
         self._worker.write(data)
         self._append_to(self._send_box, display, "#1565C0")
+        if self.on_data_sent:
+            self.on_data_sent()
         # do NOT clear input — user keeps it for repeated sends
 
     def _toggle_loop(self, checked: bool) -> None:
@@ -414,9 +429,9 @@ class SerialPage(QWidget):
     def _lock_input(self, locked: bool) -> None:
         self._send_input.setReadOnly(locked)
         self._send_input.setStyleSheet(
-            "background: #EEEEEE; border: 1px solid #C8D0DC; border-radius: 4px;"
+            "background: #F2F3F5; border: 1px solid #E5E8EB; border-radius: 4px;"
             if locked else
-            "background: white; border: 1px solid #C8D0DC; border-radius: 4px;"
+            "background: white; border: 1px solid #D0D5DD; border-radius: 4px;"
         )
         cursor = Qt.CursorShape.ForbiddenCursor if locked else Qt.CursorShape.IBeamCursor
         self._send_input.setCursor(cursor)

@@ -112,7 +112,10 @@ class PidPage(QWidget):
     def _build_pid_panel(self) -> QWidget:
         panel = QWidget()
         panel.setFixedWidth(300)
-        panel.setStyleSheet("background: white; border-right: 1px solid #D0D8E4;")
+        panel.setStyleSheet(
+            "background: #FAFBFC;"
+            "border-right: 1px solid #E5E8EB;"
+        )
         v = QVBoxLayout(panel)
         v.setContentsMargins(12, 12, 12, 12)
         v.setSpacing(8)

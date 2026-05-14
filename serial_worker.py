@@ -12,6 +12,8 @@ class SerialWorker(QObject):
         self._port: serial.Serial | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self.rx_bytes: int = 0
+        self.tx_bytes: int = 0
 
     def open(self, port: str, baudrate: int,
              bytesize=8, parity="N", stopbits=1) -> None:
@@ -38,17 +40,19 @@ class SerialWorker(QObject):
     def write(self, data: bytes) -> None:
         if self._port and self._port.is_open:
             self._port.write(data)
-            self._port.flush()  # 立即推送到驱动层，不在缓冲区积压
+            self._port.flush()
+            self.tx_bytes += len(data)
 
     def _read_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
                 if self._port and self._port.in_waiting:
                     raw = self._port.readline()
+                    self.rx_bytes += len(raw)
                     line = raw.decode("utf-8", errors="replace").strip()
                     if line:
                         self.line_received.emit(line)
                 else:
-                    time.sleep(0.001)  # 无数据时让出 GIL，避免空转抢占主线程
+                    time.sleep(0.001)
             except serial.SerialException:
                 break

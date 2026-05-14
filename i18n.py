@@ -59,6 +59,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "curve_setpoint":   {"zh": "目标值",             "en": "Setpoint"},
     "curve_actual":     {"zh": "实际值",             "en": "Actual"},
 
+    # --- status bar ---
+    "status_disconnected": {"zh": "未连接",             "en": "Disconnected"},
+    "status_connected":    {"zh": "已连接",             "en": "Connected"},
+    "status_port":         {"zh": "端口",               "en": "Port"},
+    "status_baud":         {"zh": "波特率",             "en": "Baud"},
+    "status_rx":           {"zh": "RX",                 "en": "RX"},
+    "status_tx":           {"zh": "TX",                 "en": "TX"},
+
     # --- menu ---
     "menu_language":    {"zh": "语言",               "en": "Language"},
     "lang_zh":          {"zh": "中文",               "en": "Chinese"},
