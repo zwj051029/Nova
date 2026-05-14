@@ -12,17 +12,33 @@ from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat
 from i18n import Translator
 from serial_worker import SerialWorker
 
-BTN_CONNECTED_STYLE = """
+BTN_OPEN_STYLE = """
 QPushButton {
-    background-color: #6DB89A;
+    background-color: #4A90D9;
     color: white;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 5px 10px;
+    font-size: 14px;
     font-weight: bold;
 }
-QPushButton:hover   { background-color: #5AA882; }
-QPushButton:pressed { background-color: #4A9870; }
+QPushButton:hover   { background-color: #3A7BC8; }
+QPushButton:pressed { background-color: #2E6AB0; }
+QPushButton:disabled { background-color: #D0D0D0; color: #888888; }
+"""
+
+BTN_CLOSE_STYLE = """
+QPushButton {
+    background-color: #E05555;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 14px;
+    font-weight: bold;
+}
+QPushButton:hover   { background-color: #C94444; }
+QPushButton:pressed { background-color: #B03333; }
 """
 
 # 字符串模式：默认绿色（继承全局）
@@ -170,6 +186,8 @@ class SerialPage(QWidget):
 
         # connect button
         self._toggle_btn = QPushButton()
+        self._toggle_btn.setMinimumHeight(40)
+        self._toggle_btn.setStyleSheet(BTN_OPEN_STYLE)
         self._toggle_btn.clicked.connect(self._toggle_serial)
         v.addSpacing(8)
         v.addWidget(self._toggle_btn)
@@ -302,6 +320,7 @@ class SerialPage(QWidget):
         else:
             self._port_combo.addItem(self._tr.tr("no_port"))
             self._toggle_btn.setEnabled(False)
+            self._toggle_btn.setText(self._tr.tr("no_port_available"))
 
     def _toggle_serial(self) -> None:
         t = self._tr.tr
@@ -338,11 +357,11 @@ class SerialPage(QWidget):
     def _update_controls(self, opened: bool) -> None:
         t = self._tr.tr
         if opened:
-            self._toggle_btn.setText(t("connected"))
-            self._toggle_btn.setStyleSheet(BTN_CONNECTED_STYLE)
+            self._toggle_btn.setText(t("close_port"))
+            self._toggle_btn.setStyleSheet(BTN_CLOSE_STYLE)
         else:
-            self._toggle_btn.setText(t("disconnected"))
-            self._toggle_btn.setStyleSheet("")
+            self._toggle_btn.setText(t("open_port"))
+            self._toggle_btn.setStyleSheet(BTN_OPEN_STYLE)
         for w in (self._port_combo, self._baud_combo, self._flow_combo,
                   self._parity_combo, self._bytesize_combo, self._stopbits_combo,
                   self._refresh_btn):
@@ -463,6 +482,6 @@ class SerialPage(QWidget):
         self._send_box.setPlaceholderText(t("send_placeholder"))
         self._recv_box.setPlaceholderText(t("placeholder"))
         if self._worker.is_open():
-            self._toggle_btn.setText(t("connected"))
+            self._toggle_btn.setText(t("close_port"))
         else:
-            self._toggle_btn.setText(t("disconnected"))
+            self._toggle_btn.setText(t("open_port"))

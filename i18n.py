@@ -22,6 +22,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "no_port":          {"zh": "无可用串口",          "en": "No ports"},
     "connected":        {"zh": "已连接",             "en": "Connected"},
     "disconnected":     {"zh": "已断开",             "en": "Disconnected"},
+    "open_port":        {"zh": "打开串口",            "en": "Open"},
+    "close_port":       {"zh": "关闭串口",            "en": "Close"},
+    "no_port_available":{"zh": "无可用串口",          "en": "No Port Available"},
     "serial_config_group": {"zh": "串口参数配置",    "en": "Serial Configuration"},
 
     # --- receive area ---
