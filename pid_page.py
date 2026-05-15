@@ -48,7 +48,7 @@ class PidRow:
 
         # 数值框
         self.spinbox = QDoubleSpinBox()
-        self.spinbox.setRange(0.0, 10.0)
+        self.spinbox.setRange(0.0, 100.0)
         self.spinbox.setSingleStep(0.01)
         self.spinbox.setDecimals(2)
         self.spinbox.setValue(0.0)
@@ -62,7 +62,7 @@ class PidRow:
         right_hbox.setContentsMargins(0, 0, 0, 0)
         right_hbox.setSpacing(4)
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 1000)
+        self.slider.setRange(0, 10000)
         self.slider.setValue(0)
         self.send_btn = QPushButton()
         self.send_btn.setFixedWidth(48)
