@@ -80,6 +80,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
 
     # --- error messages ---
     "error_open_port":  {"zh": "[错误] 无法打开串口: ", "en": "[Error] Cannot open port: "},
+    "toast_pid_send_fail": {"zh": "PID 发送失败",       "en": "PID send failed"},
+    "toast_pid_not_open":  {"zh": "串口未打开",          "en": "Serial port not open"},
 
     # --- pyqtgraph ViewBox right-click menu ---
     "vb_view_all":      {"zh": "全部显示",           "en": "View All"},

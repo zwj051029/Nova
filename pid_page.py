@@ -15,6 +15,37 @@ from serial_worker import SerialWorker
 
 BUFFER_SIZE = 500
 
+BTN_SEND_STYLE = """
+QPushButton {
+    background-color: #165DFF;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    font-weight: bold;
+}
+QPushButton:hover   { background-color: #0E4BD7; }
+QPushButton:pressed { background-color: #0A3AB0; }
+QPushButton:disabled { background-color: #C9CDD4; color: #86909C; }
+"""
+
+BTN_SEND_ALL_STYLE = """
+QPushButton {
+    background-color: #165DFF;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: bold;
+    min-height: 38px;
+}
+QPushButton:hover   { background-color: #0E4BD7; }
+QPushButton:pressed { background-color: #0A3AB0; }
+QPushButton:disabled { background-color: #C9CDD4; color: #86909C; }
+"""
+
 
 def _system_font() -> str:
     if platform.system() == "Windows":
@@ -65,7 +96,8 @@ class PidRow:
         self.slider.setRange(0, 10000)
         self.slider.setValue(0)
         self.send_btn = QPushButton()
-        self.send_btn.setFixedWidth(48)
+        self.send_btn.setFixedWidth(52)
+        self.send_btn.setStyleSheet(BTN_SEND_STYLE)
         right_hbox.addWidget(self.slider, stretch=1)
         right_hbox.addWidget(self.send_btn)
         right_grid.addWidget(right_row, row, 0)
@@ -103,6 +135,7 @@ class PidPage(QWidget):
         self._tr = Translator()
         self._buf_setpoint: collections.deque[float] = collections.deque(maxlen=BUFFER_SIZE)
         self._buf_actual: collections.deque[float] = collections.deque(maxlen=BUFFER_SIZE)
+        self.on_toast = None
         self._tr.on_change(self.retranslate)
         self._build_ui()
         self.retranslate()
@@ -190,6 +223,7 @@ class PidPage(QWidget):
         self._pid_kd.send_btn.clicked.connect(lambda: self._send_single(self._pid_kd))
 
         self._send_all_btn = QPushButton()
+        self._send_all_btn.setStyleSheet(BTN_SEND_ALL_STYLE)
         self._send_all_btn.clicked.connect(self._send_all)
         group_layout.addWidget(self._send_all_btn)
 
@@ -246,14 +280,34 @@ class PidPage(QWidget):
     # ------------------------------------------------------------------
 
     def _send_single(self, row: PidRow) -> None:
-        msg = f"PID:{row.name}={row.value():.2f}\r\n"
-        self._worker.write(msg.encode("utf-8"))
-        print(f"已发送: {msg.strip()}")
+        if not self._worker.is_open():
+            if self.on_toast:
+                self.on_toast(self._tr.tr("toast_pid_not_open"), False)
+            return
+        val = row.value()
+        msg = f"PID:{row.name}={val:.2f}\r\n"
+        try:
+            self._worker.write(msg.encode("utf-8"))
+            if self.on_toast:
+                self.on_toast(f"{row.name}={val:.2f} ✓", True)
+        except Exception as e:
+            if self.on_toast:
+                self.on_toast(self._tr.tr("toast_pid_send_fail") + f": {e}", False)
 
     def _send_all(self) -> None:
-        msg = f"PID:{self._pid_kp.value():.2f},{self._pid_ki.value():.2f},{self._pid_kd.value():.2f}\r\n"
-        self._worker.write(msg.encode("utf-8"))
-        print(f"已发送: {msg.strip()}")
+        if not self._worker.is_open():
+            if self.on_toast:
+                self.on_toast(self._tr.tr("toast_pid_not_open"), False)
+            return
+        kp, ki, kd = self._pid_kp.value(), self._pid_ki.value(), self._pid_kd.value()
+        msg = f"PID:{kp:.2f},{ki:.2f},{kd:.2f}\r\n"
+        try:
+            self._worker.write(msg.encode("utf-8"))
+            if self.on_toast:
+                self.on_toast(f"Kp={kp:.2f}, Ki={ki:.2f}, Kd={kd:.2f} ✓", True)
+        except Exception as e:
+            if self.on_toast:
+                self.on_toast(self._tr.tr("toast_pid_send_fail") + f": {e}", False)
 
     def set_send_enabled(self, enabled: bool) -> None:
         self._send_all_btn.setEnabled(enabled)

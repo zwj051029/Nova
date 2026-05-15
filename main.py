@@ -325,6 +325,7 @@ class MainWindow(QMainWindow):
         self._serial_page.on_data_sent = self._on_data_sent
         self._serial_page.on_toast = self._show_toast
         self._pid_page = PidPage(self._worker)
+        self._pid_page.on_toast = self._show_toast
         self._stack.addWidget(self._serial_page)   # index 0
         self._stack.addWidget(self._pid_page)       # index 1
 
