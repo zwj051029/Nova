@@ -415,14 +415,19 @@ class MainWindow(QMainWindow):
 
     def _show_toast(self, message: str, success: bool) -> None:
         old = getattr(self, "_toast", None)
-        if old:
+        if old is not None:
             try:
                 old.close()
             except RuntimeError:
                 pass
             self._toast = None
-        self._toast = ToastWidget(message, success, self.centralWidget())
-        self._toast.destroyed.connect(lambda: setattr(self, "_toast", None))
+        toast = ToastWidget(message, success, self.centralWidget())
+        self._toast = toast
+        toast.destroyed.connect(self._on_toast_destroyed)
+
+    def _on_toast_destroyed(self, obj) -> None:
+        if self._toast is obj:
+            self._toast = None
 
     def _on_connection_changed(self, opened: bool) -> None:
         self._pid_page.set_send_enabled(opened)
