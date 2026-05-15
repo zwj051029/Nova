@@ -448,19 +448,22 @@ class SerialPage(QWidget):
 
     def append_received_bytes(self, data: bytes) -> None:
         if self._is_recv_hex:
-            # 十六进制模式：始终显示 hex，每次一行
-            hex_str = " ".join(f"{b:02X}" for b in data)
-            self._append_to(self._recv_box, hex_str, "#7B5EA7")
+            # 每 16 字节一行，保证对齐不折行
+            for i in range(0, len(data), 16):
+                chunk = data[i:i + 16]
+                hex_str = " ".join(f"{b:02X}" for b in chunk)
+                self._append_to(self._recv_box, hex_str, "#7B5EA7")
         else:
-            # 字符串模式：尝试 UTF-8 解码，失败则回退到 hex
             try:
                 text = data.decode("utf-8").rstrip("\r\n")
                 for line in text.splitlines():
                     if line:
                         self._append_to(self._recv_box, line, "#2E7D32")
             except UnicodeDecodeError:
-                hex_str = " ".join(f"{b:02X}" for b in data)
-                self._append_to(self._recv_box, hex_str, "#7B5EA7")
+                for i in range(0, len(data), 16):
+                    chunk = data[i:i + 16]
+                    hex_str = " ".join(f"{b:02X}" for b in chunk)
+                    self._append_to(self._recv_box, hex_str, "#7B5EA7")
 
     def current_port(self) -> str:
         return self._port_combo.currentText()
