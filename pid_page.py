@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QPushButton, QGroupBox,
     QSlider, QDoubleSpinBox, QGridLayout, QSplitter,
+    QAbstractSpinBox,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
@@ -52,6 +53,7 @@ class PidRow:
         self.spinbox.setDecimals(2)
         self.spinbox.setValue(0.0)
         self.spinbox.setFixedWidth(80)
+        self.spinbox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         spinboxes_grid.addWidget(self.spinbox, row, 0)
 
         # 右侧：滑块 + 发送按钮
