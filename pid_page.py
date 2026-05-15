@@ -114,12 +114,19 @@ class PidPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        layout.addWidget(self._build_pid_panel())
-        layout.addWidget(self._build_plot_widget(), stretch=1)
+        # 面板与波形图之间可拖拽
+        page_splitter = QSplitter(Qt.Orientation.Horizontal)
+        page_splitter.setHandleWidth(4)
+        page_splitter.addWidget(self._build_pid_panel())
+        page_splitter.addWidget(self._build_plot_widget())
+        page_splitter.setStretchFactor(0, 0)
+        page_splitter.setStretchFactor(1, 1)
+        page_splitter.setSizes([360, 880])
+        layout.addWidget(page_splitter)
 
     def _build_pid_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setFixedWidth(360)
+        panel.setMinimumWidth(260)
         panel.setStyleSheet(
             "background: #FAFBFC;"
             "border-right: 1px solid #E5E8EB;"
