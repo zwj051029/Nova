@@ -414,10 +414,15 @@ class MainWindow(QMainWindow):
         self._status_indicator.update_tx(self._tr.tr, self._worker.tx_bytes)
 
     def _show_toast(self, message: str, success: bool) -> None:
-        if getattr(self, "_toast", None):
-            self._toast.close()
+        old = getattr(self, "_toast", None)
+        if old:
+            try:
+                old.close()
+            except RuntimeError:
+                pass
             self._toast = None
         self._toast = ToastWidget(message, success, self.centralWidget())
+        self._toast.destroyed.connect(lambda: setattr(self, "_toast", None))
 
     def _on_connection_changed(self, opened: bool) -> None:
         self._pid_page.set_send_enabled(opened)
