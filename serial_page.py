@@ -187,9 +187,10 @@ class SerialPage(QWidget):
         self._loop_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._loop_timer.timeout.connect(self._do_send)
         self._tr.on_change(self.retranslate)
-        self.on_connection_changed = None  # callback(bool)
-        self.on_data_sent = None           # callback()
-        self.on_toast = None               # callback(str, bool)  msg, success
+        self.on_connection_changed = None
+        self.on_data_sent = None
+        self.on_toast = None
+        self._is_recv_hex = False  # False=字符串, True=十六进制
 
         self._scanner = _PortScanner()
         self._scanner.finished.connect(self._on_scan_finished)
@@ -415,11 +416,19 @@ class SerialPage(QWidget):
         hdr = QHBoxLayout()
         self._recv_label = QLabel()
         self._recv_label.setStyleSheet("font-weight: bold; color: #555;")
+
+        self._recv_mode_btn = QPushButton()
+        self._recv_mode_btn.setFixedWidth(100)
+        self._recv_mode_btn.clicked.connect(self._toggle_recv_mode)
+
         self._clear_recv_btn = QPushButton()
         self._clear_recv_btn.setFixedWidth(72)
         self._clear_recv_btn.clicked.connect(self._clear_recv_box)
+
         hdr.addWidget(self._recv_label)
         hdr.addStretch()
+        hdr.addWidget(self._recv_mode_btn)
+        hdr.addSpacing(4)
         hdr.addWidget(self._clear_recv_btn)
         v.addLayout(hdr)
 
@@ -438,17 +447,20 @@ class SerialPage(QWidget):
         self._append_to(self._recv_box, line, "#2E7D32")
 
     def append_received_bytes(self, data: bytes) -> None:
-        """显示原始字节：能解码为 UTF-8 就按文本显示，否则显示十六进制。"""
-        try:
-            text = data.decode("utf-8").rstrip("\r\n")
-            # 按行分割，每行单独显示
-            for line in text.splitlines():
-                if line:
-                    self._append_to(self._recv_box, line, "#2E7D32")
-        except UnicodeDecodeError:
-            # 二进制数据：每次最多显示一行十六进制，避免刷屏
+        if self._is_recv_hex:
+            # 十六进制模式：始终显示 hex，每次一行
             hex_str = " ".join(f"{b:02X}" for b in data)
             self._append_to(self._recv_box, hex_str, "#7B5EA7")
+        else:
+            # 字符串模式：尝试 UTF-8 解码，失败则回退到 hex
+            try:
+                text = data.decode("utf-8").rstrip("\r\n")
+                for line in text.splitlines():
+                    if line:
+                        self._append_to(self._recv_box, line, "#2E7D32")
+            except UnicodeDecodeError:
+                hex_str = " ".join(f"{b:02X}" for b in data)
+                self._append_to(self._recv_box, hex_str, "#7B5EA7")
 
     def current_port(self) -> str:
         return self._port_combo.currentText()
@@ -643,6 +655,10 @@ class SerialPage(QWidget):
         self._is_hex_mode = not self._is_hex_mode
         self._update_mode_btn()
 
+    def _toggle_recv_mode(self) -> None:
+        self._is_recv_hex = not self._is_recv_hex
+        self._update_recv_mode_btn()
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -674,6 +690,15 @@ class SerialPage(QWidget):
             self._mode_btn.setStyleSheet(MODE_STR_STYLE)
             self._send_input.setPlaceholderText(t("send_input_ph_str"))
 
+    def _update_recv_mode_btn(self) -> None:
+        t = self._tr.tr
+        if self._is_recv_hex:
+            self._recv_mode_btn.setText(t("recv_mode_btn_hex"))
+            self._recv_mode_btn.setStyleSheet(MODE_HEX_STYLE)
+        else:
+            self._recv_mode_btn.setText(t("recv_mode_btn_str"))
+            self._recv_mode_btn.setStyleSheet(MODE_STR_STYLE)
+
     # ------------------------------------------------------------------
     # i18n
     # ------------------------------------------------------------------
@@ -696,6 +721,7 @@ class SerialPage(QWidget):
         self._interval_label.setText(t("loop_interval_lbl"))
         self._recv_label.setText(t("recv_label"))
         self._clear_recv_btn.setText(t("clear_recv_btn"))
+        self._update_recv_mode_btn()
         self._clear_send_btn.setText(t("clear_send_btn"))
         self._send_box.setPlaceholderText(t("send_placeholder"))
         self._recv_box.setPlaceholderText(t("placeholder"))

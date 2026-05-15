@@ -44,6 +44,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "send_input_ph":    {"zh": "输入发送内容…",      "en": "Enter data to send…"},
     "hex_send_chk":     {"zh": "十六进制",           "en": "Hex"},
     "str_send_chk":     {"zh": "字符串",             "en": "String"},
+    "recv_mode_btn_str":  {"zh": "📝 字符串",           "en": "📝 String"},
+    "recv_mode_btn_hex":  {"zh": "🔢 十六进制",         "en": "🔢 Hex"},
     "mode_btn_str":     {"zh": "📝 字符串",           "en": "📝 String"},
     "mode_btn_hex":     {"zh": "🔢 十六进制",         "en": "🔢 Hex"},
     "send_input_ph_str":{"zh": "输入发送内容…",       "en": "Enter data to send…"},
