@@ -283,10 +283,17 @@ class MainWindow(QMainWindow):
         self._tr.on_change(self._retranslate)
 
         self._worker = SerialWorker()
-        self._worker.line_received.connect(self._on_line_received)
+        self._worker.lines_received.connect(self._on_lines_received)
 
         self._connected_port = ""
         self._connected_baud = 0
+
+        # throttle buffer: accumulate lines, flush to UI every 50ms
+        self._pending_lines: list[str] = []
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setInterval(50)
+        self._flush_timer.timeout.connect(self._flush_lines)
+        self._flush_timer.start()
 
         self._build_ui()
         self._build_menu()
@@ -378,9 +385,17 @@ class MainWindow(QMainWindow):
     # Data routing
     # ------------------------------------------------------------------
 
-    def _on_line_received(self, line: str) -> None:
-        self._serial_page.append_received(line)
-        self._pid_page.ingest_line(line)
+    def _on_lines_received(self, lines: list) -> None:
+        self._pending_lines.extend(lines)
+
+    def _flush_lines(self) -> None:
+        if not self._pending_lines:
+            return
+        lines = self._pending_lines
+        self._pending_lines = []
+        for line in lines:
+            self._serial_page.append_received(line)
+            self._pid_page.ingest_line(line)
         self._status_indicator.update_rx(self._tr.tr, self._worker.rx_bytes)
 
     def _on_data_sent(self) -> None:
