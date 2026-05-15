@@ -36,29 +36,40 @@ def parse_line(line: str) -> tuple[int, float, float, float] | None:
 
 
 class PidRow:
-    def __init__(self, name: str, layout: QGridLayout, row: int):
+    def __init__(self, name: str, left_grid: QGridLayout, right_grid: QGridLayout, row: int):
         self.name = name
         self._syncing = False
 
+        # 左侧：标签 + SpinBox
+        left_row = QWidget()
+        left_hbox = QHBoxLayout(left_row)
+        left_hbox.setContentsMargins(0, 0, 0, 0)
+        left_hbox.setSpacing(6)
         self._label = QLabel(name)
-        layout.addWidget(self._label, row, 0)
-
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 1000)
-        self.slider.setValue(0)
-        layout.addWidget(self.slider, row, 1)
-
         self.spinbox = QDoubleSpinBox()
         self.spinbox.setRange(0.0, 10.0)
         self.spinbox.setSingleStep(0.01)
         self.spinbox.setDecimals(2)
         self.spinbox.setValue(0.0)
         self.spinbox.setFixedWidth(80)
-        layout.addWidget(self.spinbox, row, 2)
+        left_hbox.addWidget(self._label)
+        left_hbox.addWidget(self.spinbox)
+        left_hbox.addStretch()
+        left_grid.addWidget(left_row, row, 0)
 
+        # 右侧：滑块 + 发送按钮
+        right_row = QWidget()
+        right_hbox = QHBoxLayout(right_row)
+        right_hbox.setContentsMargins(0, 0, 0, 0)
+        right_hbox.setSpacing(4)
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(0, 1000)
+        self.slider.setValue(0)
         self.send_btn = QPushButton()
         self.send_btn.setFixedWidth(48)
-        layout.addWidget(self.send_btn, row, 3)
+        right_hbox.addWidget(self.slider, stretch=1)
+        right_hbox.addWidget(self.send_btn)
+        right_grid.addWidget(right_row, row, 0)
 
         self.slider.valueChanged.connect(self._slider_changed)
         self.spinbox.valueChanged.connect(self._spinbox_changed)
@@ -111,7 +122,7 @@ class PidPage(QWidget):
 
     def _build_pid_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setFixedWidth(300)
+        panel.setFixedWidth(360)
         panel.setStyleSheet(
             "background: #FAFBFC;"
             "border-right: 1px solid #E5E8EB;"
@@ -122,13 +133,35 @@ class PidPage(QWidget):
         v.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self._pid_group_box = QGroupBox()
-        grid = QGridLayout(self._pid_group_box)
-        grid.setSpacing(6)
-        grid.setColumnStretch(1, 1)
+        group_layout = QVBoxLayout(self._pid_group_box)
+        group_layout.setContentsMargins(8, 14, 8, 8)
+        group_layout.setSpacing(8)
 
-        self._pid_kp = PidRow("Kp", grid, 0)
-        self._pid_ki = PidRow("Ki", grid, 1)
-        self._pid_kd = PidRow("Kd", grid, 2)
+        # ---- 可拖拽分隔条（参考串口配置页面） ----
+        col_splitter = QSplitter(Qt.Orientation.Horizontal)
+        col_splitter.setHandleWidth(4)
+
+        left_widget = QWidget()
+        left_grid = QGridLayout(left_widget)
+        left_grid.setSpacing(8)
+        left_grid.setContentsMargins(4, 0, 0, 0)
+
+        right_widget = QWidget()
+        right_grid = QGridLayout(right_widget)
+        right_grid.setSpacing(8)
+        right_grid.setContentsMargins(0, 0, 4, 0)
+        right_grid.setColumnStretch(0, 1)
+
+        col_splitter.addWidget(left_widget)
+        col_splitter.addWidget(right_widget)
+        col_splitter.setStretchFactor(0, 0)
+        col_splitter.setStretchFactor(1, 1)
+        col_splitter.setSizes([120, 200])
+        group_layout.addWidget(col_splitter)
+
+        self._pid_kp = PidRow("Kp", left_grid, right_grid, 0)
+        self._pid_ki = PidRow("Ki", left_grid, right_grid, 1)
+        self._pid_kd = PidRow("Kd", left_grid, right_grid, 2)
 
         self._pid_kp.send_btn.clicked.connect(lambda: self._send_single(self._pid_kp))
         self._pid_ki.send_btn.clicked.connect(lambda: self._send_single(self._pid_ki))
@@ -136,7 +169,7 @@ class PidPage(QWidget):
 
         self._send_all_btn = QPushButton()
         self._send_all_btn.clicked.connect(self._send_all)
-        grid.addWidget(self._send_all_btn, 3, 0, 1, 4)
+        group_layout.addWidget(self._send_all_btn)
 
         v.addWidget(self._pid_group_box)
         v.addStretch()
