@@ -36,26 +36,23 @@ def parse_line(line: str) -> tuple[int, float, float, float] | None:
 
 
 class PidRow:
-    def __init__(self, name: str, left_grid: QGridLayout, right_grid: QGridLayout, row: int):
+    def __init__(self, name: str, labels_grid: QGridLayout, spinboxes_grid: QGridLayout,
+                 right_grid: QGridLayout, row: int):
         self.name = name
         self._syncing = False
 
-        # 左侧：标签 + SpinBox
-        left_row = QWidget()
-        left_hbox = QHBoxLayout(left_row)
-        left_hbox.setContentsMargins(0, 0, 0, 0)
-        left_hbox.setSpacing(6)
+        # 标签
         self._label = QLabel(name)
+        labels_grid.addWidget(self._label, row, 0)
+
+        # 数值框
         self.spinbox = QDoubleSpinBox()
         self.spinbox.setRange(0.0, 10.0)
         self.spinbox.setSingleStep(0.01)
         self.spinbox.setDecimals(2)
         self.spinbox.setValue(0.0)
         self.spinbox.setFixedWidth(80)
-        left_hbox.addWidget(self._label)
-        left_hbox.addWidget(self.spinbox)
-        left_hbox.addStretch()
-        left_grid.addWidget(left_row, row, 0)
+        spinboxes_grid.addWidget(self.spinbox, row, 0)
 
         # 右侧：滑块 + 发送按钮
         right_row = QWidget()
@@ -137,31 +134,47 @@ class PidPage(QWidget):
         group_layout.setContentsMargins(8, 14, 8, 8)
         group_layout.setSpacing(8)
 
-        # ---- 可拖拽分隔条（参考串口配置页面） ----
-        col_splitter = QSplitter(Qt.Orientation.Horizontal)
-        col_splitter.setHandleWidth(4)
+        # ---- 外层分隔条：(标签+数值) | (滑块+按钮) ----
+        outer_splitter = QSplitter(Qt.Orientation.Horizontal)
+        outer_splitter.setHandleWidth(4)
 
-        left_widget = QWidget()
-        left_grid = QGridLayout(left_widget)
-        left_grid.setSpacing(8)
-        left_grid.setContentsMargins(4, 0, 0, 0)
+        # 左侧区域：标签 + 数值（内部也可拖拽）
+        inner_splitter = QSplitter(Qt.Orientation.Horizontal)
+        inner_splitter.setHandleWidth(4)
 
+        labels_widget = QWidget()
+        labels_grid = QGridLayout(labels_widget)
+        labels_grid.setSpacing(8)
+        labels_grid.setContentsMargins(4, 0, 0, 0)
+
+        spinboxes_widget = QWidget()
+        spinboxes_grid = QGridLayout(spinboxes_widget)
+        spinboxes_grid.setSpacing(8)
+        spinboxes_grid.setContentsMargins(0, 0, 0, 0)
+
+        inner_splitter.addWidget(labels_widget)
+        inner_splitter.addWidget(spinboxes_widget)
+        inner_splitter.setStretchFactor(0, 0)
+        inner_splitter.setStretchFactor(1, 0)
+        inner_splitter.setSizes([36, 80])
+
+        # 右侧区域：滑块 + 发送按钮
         right_widget = QWidget()
         right_grid = QGridLayout(right_widget)
         right_grid.setSpacing(8)
         right_grid.setContentsMargins(0, 0, 4, 0)
         right_grid.setColumnStretch(0, 1)
 
-        col_splitter.addWidget(left_widget)
-        col_splitter.addWidget(right_widget)
-        col_splitter.setStretchFactor(0, 0)
-        col_splitter.setStretchFactor(1, 1)
-        col_splitter.setSizes([120, 200])
-        group_layout.addWidget(col_splitter)
+        outer_splitter.addWidget(inner_splitter)
+        outer_splitter.addWidget(right_widget)
+        outer_splitter.setStretchFactor(0, 0)
+        outer_splitter.setStretchFactor(1, 1)
+        outer_splitter.setSizes([128, 200])
+        group_layout.addWidget(outer_splitter)
 
-        self._pid_kp = PidRow("Kp", left_grid, right_grid, 0)
-        self._pid_ki = PidRow("Ki", left_grid, right_grid, 1)
-        self._pid_kd = PidRow("Kd", left_grid, right_grid, 2)
+        self._pid_kp = PidRow("Kp", labels_grid, spinboxes_grid, right_grid, 0)
+        self._pid_ki = PidRow("Ki", labels_grid, spinboxes_grid, right_grid, 1)
+        self._pid_kd = PidRow("Kd", labels_grid, spinboxes_grid, right_grid, 2)
 
         self._pid_kp.send_btn.clicked.connect(lambda: self._send_single(self._pid_kp))
         self._pid_ki.send_btn.clicked.connect(lambda: self._send_single(self._pid_ki))
