@@ -437,6 +437,19 @@ class SerialPage(QWidget):
     def append_received(self, line: str) -> None:
         self._append_to(self._recv_box, line, "#2E7D32")
 
+    def append_received_bytes(self, data: bytes) -> None:
+        """显示原始字节：能解码为 UTF-8 就按文本显示，否则显示十六进制。"""
+        try:
+            text = data.decode("utf-8").rstrip("\r\n")
+            # 按行分割，每行单独显示
+            for line in text.splitlines():
+                if line:
+                    self._append_to(self._recv_box, line, "#2E7D32")
+        except UnicodeDecodeError:
+            # 二进制数据：每次最多显示一行十六进制，避免刷屏
+            hex_str = " ".join(f"{b:02X}" for b in data)
+            self._append_to(self._recv_box, hex_str, "#7B5EA7")
+
     def current_port(self) -> str:
         return self._port_combo.currentText()
 
