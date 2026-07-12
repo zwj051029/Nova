@@ -12,6 +12,8 @@ from i18n import Translator
 from serial_worker import SerialWorker
 from serial_page import SerialPage
 from pid_page import PidPage
+from ai_tuning_page import AiTuningPage
+from tuning.models import PIDGains
 
 
 def _system_font() -> str:
@@ -322,12 +324,19 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         self._serial_page = SerialPage(self._worker)
         self._serial_page.on_connection_changed = self._on_connection_changed
+        self._serial_page.on_before_disconnect = self._restore_ai_baseline
         self._serial_page.on_data_sent = self._on_data_sent
         self._serial_page.on_toast = self._show_toast
         self._pid_page = PidPage(self._worker)
         self._pid_page.on_toast = self._show_toast
+        self._ai_page = AiTuningPage(self._worker)
+        self._ai_page.on_toast = self._show_toast
+        self._ai_page.on_data_sent = self._on_data_sent
+        self._ai_page.on_pid_applied = self._on_ai_pid_applied
+        self._ai_page.baseline_provider = self._manual_pid_gains
         self._stack.addWidget(self._serial_page)   # index 0
         self._stack.addWidget(self._pid_page)       # index 1
+        self._stack.addWidget(self._ai_page)        # index 2
 
         outer.addWidget(self._stack, stretch=1)
 
@@ -354,8 +363,15 @@ class MainWindow(QMainWindow):
         self._nav_pid_btn.setMinimumHeight(64)
         self._nav_pid_btn.clicked.connect(lambda: self._switch_page(1))
 
+        self._nav_ai_btn = QPushButton()
+        self._nav_ai_btn.setStyleSheet(NAV_BTN_STYLE)
+        self._nav_ai_btn.setCheckable(True)
+        self._nav_ai_btn.setMinimumHeight(64)
+        self._nav_ai_btn.clicked.connect(lambda: self._switch_page(2))
+
         layout.addWidget(self._nav_serial_btn)
         layout.addWidget(self._nav_pid_btn)
+        layout.addWidget(self._nav_ai_btn)
         layout.addStretch()
         return nav
 
@@ -383,6 +399,7 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(index)
         self._nav_serial_btn.setChecked(index == 0)
         self._nav_pid_btn.setChecked(index == 1)
+        self._nav_ai_btn.setChecked(index == 2)
 
     # ------------------------------------------------------------------
     # Data routing
@@ -409,9 +426,19 @@ class MainWindow(QMainWindow):
             self._pending_lines = []
             for line in lines:
                 self._pid_page.ingest_line(line)
+                self._ai_page.ingest_line(line)
 
     def _on_data_sent(self) -> None:
         self._status_indicator.update_tx(self._tr.tr, self._worker.tx_bytes)
+
+    def _manual_pid_gains(self) -> PIDGains:
+        return PIDGains(*self._pid_page.current_values())
+
+    def _on_ai_pid_applied(self, gains: PIDGains) -> None:
+        self._pid_page.set_values(gains.kp, gains.ki, gains.kd)
+
+    def _restore_ai_baseline(self) -> None:
+        self._ai_page.restore_baseline()
 
     def _show_toast(self, message: str, success: bool) -> None:
         old = getattr(self, "_toast", None)
@@ -431,6 +458,7 @@ class MainWindow(QMainWindow):
 
     def _on_connection_changed(self, opened: bool) -> None:
         self._pid_page.set_send_enabled(opened)
+        self._ai_page.set_connected(opened)
         if opened:
             self._connected_port = self._serial_page.current_port()
             self._connected_baud = self._serial_page.current_baud()
@@ -451,6 +479,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(t("window_title"))
         self._nav_serial_btn.setText("🔌\n" + t("nav_serial"))
         self._nav_pid_btn.setText("📈\n" + t("nav_pid"))
+        self._nav_ai_btn.setText("✨\n" + t("nav_ai"))
         self._lang_menu.setTitle(t("menu_language"))
         self._action_zh.setText(t("lang_zh"))
         self._action_en.setText(t("lang_en"))
@@ -468,12 +497,15 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
+        self._ai_page.restore_baseline()
         self._worker.close()
         super().closeEvent(event)
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setOrganizationName("Nova")
+    app.setApplicationName("Nova")
     app.setStyleSheet(GLOBAL_STYLE)
     window = MainWindow()
     window.show()

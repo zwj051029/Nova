@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QSlider, QDoubleSpinBox, QGridLayout, QSplitter,
     QAbstractSpinBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 
 from i18n import Translator
@@ -28,6 +28,33 @@ QPushButton {
 QPushButton:hover   { background-color: #0E4BD7; }
 QPushButton:pressed { background-color: #0A3AB0; }
 QPushButton:disabled { background-color: #C9CDD4; color: #86909C; }
+"""
+
+BTN_PRECISION_STYLE = """
+QLabel {
+    background-color: #F7FAFF;
+    color: #165DFF;
+    border: 1px solid #B7D1FF;
+    border-radius: 3px;
+    padding: 2px 3px;
+    font-size: 11px;
+    font-weight: bold;
+}
+"""
+
+BTN_PRECISION_ICON_STYLE = """
+QPushButton {
+    background-color: #EEF4FF;
+    color: #165DFF;
+    border: 1px solid #B7D1FF;
+    border-radius: 4px;
+    padding: 0;
+    font-size: 15px;
+    font-weight: bold;
+}
+QPushButton:hover   { background-color: #DCE9FF; border-color: #165DFF; }
+QPushButton:pressed { background-color: #C7DCFF; }
+QPushButton:disabled { background-color: #F2F3F5; color: #86909C; border-color: #E5E8EB; }
 """
 
 BTN_SEND_ALL_STYLE = """
@@ -67,62 +94,167 @@ def parse_line(line: str) -> tuple[int, float, float, float] | None:
         return None
 
 
+class PrecisionSpinBox(QDoubleSpinBox):
+    """内部保留 6 位输入能力，界面按当前选择的精度显示。"""
+
+    def __init__(self, parent=None):
+        self._display_decimals = 2
+        super().__init__(parent)
+        # Qt 会用 decimals 限制键盘输入，因此内部始终允许到 6 位。
+        super().setDecimals(6)
+
+    def set_display_decimals(self, decimals: int, refresh_text: bool = True) -> None:
+        self._display_decimals = max(2, min(6, decimals))
+        if refresh_text:
+            self.lineEdit().setText(self.textFromValue(self.value()))
+
+    def textFromValue(self, value: float) -> str:
+        return self.locale().toString(value, "f", self._display_decimals)
+
+
 class PidRow:
     def __init__(self, name: str, labels_grid: QGridLayout, spinboxes_grid: QGridLayout,
                  right_grid: QGridLayout, row: int):
         self.name = name
         self._syncing = False
+        self._edit_sync_pending = False
+        self._decimals = 2
 
         # 标签
         self._label = QLabel(name)
         labels_grid.addWidget(self._label, row, 0)
 
         # 数值框
-        self.spinbox = QDoubleSpinBox()
+        self.spinbox = PrecisionSpinBox()
         self.spinbox.setRange(0.0, 100.0)
-        self.spinbox.setSingleStep(0.01)
-        self.spinbox.setDecimals(2)
+        self.spinbox.setSingleStep(10 ** -self._decimals)
+        self.spinbox.set_display_decimals(self._decimals)
         self.spinbox.setValue(0.0)
-        self.spinbox.setFixedWidth(80)
+        self.spinbox.setFixedWidth(146)
         self.spinbox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         spinboxes_grid.addWidget(self.spinbox, row, 0)
 
-        # 右侧：滑块 + 发送按钮
+        # 右侧：滑块 + 精度加减控件 + 发送按钮
         right_row = QWidget()
         right_hbox = QHBoxLayout(right_row)
         right_hbox.setContentsMargins(0, 0, 0, 0)
         right_hbox.setSpacing(4)
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 10000)
+        self._update_slider_range()
         self.slider.setValue(0)
+        precision_controls = QWidget()
+        precision_layout = QHBoxLayout(precision_controls)
+        precision_layout.setContentsMargins(0, 0, 0, 0)
+        precision_layout.setSpacing(2)
+        self.precision_decrease_btn = QPushButton("−")
+        self.precision_label = QLabel()
+        self.precision_increase_btn = QPushButton("+")
+        for btn in (self.precision_decrease_btn, self.precision_increase_btn):
+            btn.setFixedSize(24, 26)
+            btn.setStyleSheet(BTN_PRECISION_ICON_STYLE)
+        self.precision_label.setFixedSize(30, 26)
+        self.precision_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.precision_label.setStyleSheet(BTN_PRECISION_STYLE)
+        precision_layout.addWidget(self.precision_decrease_btn)
+        precision_layout.addWidget(self.precision_label)
+        precision_layout.addWidget(self.precision_increase_btn)
         self.send_btn = QPushButton()
         self.send_btn.setFixedWidth(52)
         self.send_btn.setStyleSheet(BTN_SEND_STYLE)
         right_hbox.addWidget(self.slider, stretch=1)
+        right_hbox.addWidget(precision_controls)
         right_hbox.addWidget(self.send_btn)
         right_grid.addWidget(right_row, row, 0)
 
         self.slider.valueChanged.connect(self._slider_changed)
         self.spinbox.valueChanged.connect(self._spinbox_changed)
+        self.spinbox.lineEdit().textEdited.connect(self._on_text_edited)
+        self.precision_decrease_btn.clicked.connect(self._decrease_decimals)
+        self.precision_increase_btn.clicked.connect(self._increase_decimals)
 
     def value(self) -> float:
         return self.spinbox.value()
 
-    def retranslate(self, send_text: str) -> None:
-        self.send_btn.setText(send_text)
+    def formatted_value(self) -> str:
+        return f"{self.value():.{self._decimals}f}"
+
+    def retranslate(self, t) -> None:
+        self.send_btn.setText(t("send_param_btn"))
+        self.precision_label.setText(t("decimal_places_btn").format(n=self._decimals))
+        tooltip = t("decimal_places_tooltip")
+        self.precision_label.setToolTip(tooltip)
+        self.precision_decrease_btn.setToolTip(t("decimal_places_decrease_tooltip"))
+        self.precision_increase_btn.setToolTip(tooltip)
+        self.precision_decrease_btn.setEnabled(self._decimals > 2)
+        self.precision_increase_btn.setEnabled(self._decimals < 6)
+
+    def _update_slider_range(self) -> None:
+        self.slider.setRange(0, 100 * (10 ** self._decimals))
+
+    def _increase_decimals(self) -> None:
+        self._set_decimals(self._decimals + 1)
+
+    def _decrease_decimals(self) -> None:
+        self._set_decimals(self._decimals - 1)
+
+    def _set_decimals(self, decimals: int, value: float | None = None,
+                      preserve_editor_text: bool = False) -> None:
+        decimals = max(2, min(6, decimals))
+        if decimals == self._decimals:
+            return
+        if value is None:
+            value = self.spinbox.value()
+        self._syncing = True
+        self._decimals = decimals
+        self.spinbox.set_display_decimals(
+            self._decimals, refresh_text=not preserve_editor_text)
+        self.spinbox.setSingleStep(10 ** -self._decimals)
+        self._update_slider_range()
+        if not preserve_editor_text:
+            self.spinbox.setValue(value)
+        self.slider.setValue(round(value * (10 ** self._decimals)))
+        self._syncing = False
+        self.retranslate(Translator().tr)
+        self.precision_decrease_btn.setEnabled(self._decimals > 2)
+        self.precision_increase_btn.setEnabled(self._decimals < 6)
+
+    def _on_text_edited(self, text: str) -> None:
+        """用户直接输入或删减小数位时，同步精度显示与滑块刻度。"""
+        if self._edit_sync_pending:
+            return
+        self._edit_sync_pending = True
+        # 等本次按键由 QDoubleSpinBox 完整解析后再调整精度，避免输入被重排。
+        QTimer.singleShot(0, self._sync_decimals_from_editor)
+
+    def _sync_decimals_from_editor(self) -> None:
+        self._edit_sync_pending = False
+        text = self.spinbox.lineEdit().text()
+        decimal_point = self.spinbox.locale().decimalPoint()
+        if decimal_point not in text:
+            return
+        fraction = text.rsplit(decimal_point, 1)[1]
+        if not fraction.isdigit():
+            return
+        decimals = max(2, min(6, len(fraction)))
+        if decimals == self._decimals:
+            return
+        value, ok = self.spinbox.locale().toDouble(text)
+        if ok:
+            # 不重写正在编辑的文本，否则全选后重新输入时会打断后续按键。
+            self._set_decimals(decimals, value, preserve_editor_text=True)
 
     def _slider_changed(self, v: int) -> None:
         if self._syncing:
             return
         self._syncing = True
-        self.spinbox.setValue(v / 100.0)
+        self.spinbox.setValue(v / (10 ** self._decimals))
         self._syncing = False
 
     def _spinbox_changed(self, v: float) -> None:
         if self._syncing:
             return
         self._syncing = True
-        self.slider.setValue(round(v * 100))
+        self.slider.setValue(round(v * (10 ** self._decimals)))
         self._syncing = False
 
 
@@ -156,12 +288,12 @@ class PidPage(QWidget):
         page_splitter.addWidget(self._build_plot_widget())
         page_splitter.setStretchFactor(0, 0)
         page_splitter.setStretchFactor(1, 1)
-        page_splitter.setSizes([360, 880])
+        page_splitter.setSizes([450, 790])
         layout.addWidget(page_splitter)
 
     def _build_pid_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setMinimumWidth(260)
+        panel.setMinimumWidth(430)
         panel.setStyleSheet(
             "background: #FAFBFC;"
             "border-right: 1px solid #E5E8EB;"
@@ -198,7 +330,7 @@ class PidPage(QWidget):
         inner_splitter.addWidget(spinboxes_widget)
         inner_splitter.setStretchFactor(0, 0)
         inner_splitter.setStretchFactor(1, 0)
-        inner_splitter.setSizes([36, 80])
+        inner_splitter.setSizes([36, 146])
 
         # 右侧区域：滑块 + 发送按钮
         right_widget = QWidget()
@@ -211,7 +343,7 @@ class PidPage(QWidget):
         outer_splitter.addWidget(right_widget)
         outer_splitter.setStretchFactor(0, 0)
         outer_splitter.setStretchFactor(1, 1)
-        outer_splitter.setSizes([128, 200])
+        outer_splitter.setSizes([196, 216])
         group_layout.addWidget(outer_splitter)
 
         self._pid_kp = PidRow("Kp", labels_grid, spinboxes_grid, right_grid, 0)
@@ -275,6 +407,14 @@ class PidPage(QWidget):
         self._curve_setpoint.setData([])
         self._curve_actual.setData([])
 
+    def current_values(self) -> tuple[float, float, float]:
+        return self._pid_kp.value(), self._pid_ki.value(), self._pid_kd.value()
+
+    def set_values(self, kp: float, ki: float, kd: float) -> None:
+        self._pid_kp.spinbox.setValue(kp)
+        self._pid_ki.spinbox.setValue(ki)
+        self._pid_kd.spinbox.setValue(kd)
+
     # ------------------------------------------------------------------
     # PID send
     # ------------------------------------------------------------------
@@ -284,12 +424,12 @@ class PidPage(QWidget):
             if self.on_toast:
                 self.on_toast(self._tr.tr("toast_pid_not_open"), False)
             return
-        val = row.value()
-        msg = f"PID:{row.name}={val:.2f}\r\n"
+        val = row.formatted_value()
+        msg = f"PID:{row.name}={val}\r\n"
         try:
             self._worker.write(msg.encode("utf-8"))
             if self.on_toast:
-                self.on_toast(f"{row.name}={val:.2f} ✓", True)
+                self.on_toast(f"{row.name}={val} ✓", True)
         except Exception as e:
             if self.on_toast:
                 self.on_toast(self._tr.tr("toast_pid_send_fail") + f": {e}", False)
@@ -299,12 +439,14 @@ class PidPage(QWidget):
             if self.on_toast:
                 self.on_toast(self._tr.tr("toast_pid_not_open"), False)
             return
-        kp, ki, kd = self._pid_kp.value(), self._pid_ki.value(), self._pid_kd.value()
-        msg = f"PID:{kp:.2f},{ki:.2f},{kd:.2f}\r\n"
+        kp = self._pid_kp.formatted_value()
+        ki = self._pid_ki.formatted_value()
+        kd = self._pid_kd.formatted_value()
+        msg = f"PID:{kp},{ki},{kd}\r\n"
         try:
             self._worker.write(msg.encode("utf-8"))
             if self.on_toast:
-                self.on_toast(f"Kp={kp:.2f}, Ki={ki:.2f}, Kd={kd:.2f} ✓", True)
+                self.on_toast(f"Kp={kp}, Ki={ki}, Kd={kd} ✓", True)
         except Exception as e:
             if self.on_toast:
                 self.on_toast(self._tr.tr("toast_pid_send_fail") + f": {e}", False)
@@ -322,9 +464,9 @@ class PidPage(QWidget):
     def retranslate(self) -> None:
         t = self._tr.tr
         self._pid_group_box.setTitle(t("pid_group"))
-        self._pid_kp.retranslate(t("send_param_btn"))
-        self._pid_ki.retranslate(t("send_param_btn"))
-        self._pid_kd.retranslate(t("send_param_btn"))
+        self._pid_kp.retranslate(t)
+        self._pid_ki.retranslate(t)
+        self._pid_kd.retranslate(t)
         self._send_all_btn.setText(t("send_all_btn"))
 
         self._plot_widget_ref.setLabel("left", t("plot_left_axis"), **{"font-size": "10pt"})

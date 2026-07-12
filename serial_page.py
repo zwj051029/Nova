@@ -188,6 +188,7 @@ class SerialPage(QWidget):
         self._loop_timer.timeout.connect(self._do_send)
         self._tr.on_change(self.retranslate)
         self.on_connection_changed = None
+        self.on_before_disconnect = None
         self.on_data_sent = None
         self.on_toast = None
         self._is_recv_hex = False  # False=字符串, True=十六进制
@@ -561,6 +562,8 @@ class SerialPage(QWidget):
             self._loop_timer.stop()
             self._loop_chk.setChecked(False)
             self._lock_input(False)
+            if self.on_before_disconnect:
+                self.on_before_disconnect()
             self._worker.close()
             self._update_controls(opened=False)
         else:
