@@ -131,6 +131,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "menu_language":    {"zh": "语言",               "en": "Language"},
     "lang_zh":          {"zh": "中文",               "en": "Chinese"},
     "lang_en":          {"zh": "英文",               "en": "English"},
+    "menu_theme":       {"zh": "主题",               "en": "Theme"},
+    "theme_light":      {"zh": "☀ 浅色",             "en": "☀ Light"},
+    "theme_dark":       {"zh": "🌙 深色",             "en": "🌙 Dark"},
 
     # --- error messages ---
     "error_open_port":  {"zh": "[错误] 无法打开串口: ", "en": "[Error] Cannot open port: "},

@@ -15,6 +15,7 @@ from PySide6.QtGui import (
 
 from i18n import Translator
 from serial_worker import SerialWorker
+from theme import colors
 
 BTN_OPEN_STYLE = """
 QPushButton {
@@ -89,44 +90,37 @@ class RefreshButton(QPushButton):
         self.setFixedSize(32, 32)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #FFFFFF, stop:1 #E8ECF2);
-                border-top:    1px solid #FFFFFF;
-                border-left:   1px solid #FFFFFF;
-                border-right:  1px solid #A0A8B8;
-                border-bottom: 1px solid #A0A8B8;
-                border-radius: 16px;
-                font-size: 16px;
-                color: #4A5568;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #FFFFFF, stop:1 #D0D8E8);
-                color: #165DFF;
-                border-right:  1px solid #8090A8;
-                border-bottom: 1px solid #8090A8;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #D0D8E8, stop:1 #FFFFFF);
-                border-top:    1px solid #A0A8B8;
-                border-left:   1px solid #A0A8B8;
-                border-right:  1px solid #FFFFFF;
-                border-bottom: 1px solid #FFFFFF;
-                color: #165DFF;
-            }
-            QPushButton:disabled {
-                background: #F0F0F0;
-                border: 1px solid #D0D0D0;
-                color: #BBBBBB;
-            }
-        """)
+        self.apply_theme("light")
         self._frame = 0
         self._spin_timer = QTimer(self)
         self._spin_timer.setInterval(80)  # ~12fps, 8帧 ≈ 1圈/秒
         self._spin_timer.timeout.connect(self._next_frame)
+
+    def apply_theme(self, theme: str) -> None:
+        c = colors(theme)
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background: {c['surface']};
+                border: 1px solid {c['border_strong']};
+                border-radius: 16px;
+                font-size: 16px;
+                color: {c['text_secondary']};
+            }}
+            QPushButton:hover {{
+                background: {c['accent_soft']};
+                color: {c['accent']};
+                border-color: {c['accent']};
+            }}
+            QPushButton:pressed {{
+                background: {c['pressed']};
+                color: {c['accent']};
+            }}
+            QPushButton:disabled {{
+                background: {c['surface_alt']};
+                border: 1px solid {c['border']};
+                color: {c['disabled']};
+            }}
+        """)
 
     def _next_frame(self) -> None:
         self._frame = (self._frame + 1) % len(_SPIN_FRAMES)
@@ -182,6 +176,7 @@ class SerialPage(QWidget):
     def __init__(self, worker: SerialWorker, parent=None):
         super().__init__(parent)
         self._worker = worker
+        self._theme = "light"
         self._tr = Translator()
         self._loop_timer = QTimer(self)
         self._loop_timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -214,7 +209,8 @@ class SerialPage(QWidget):
         root.setSpacing(0)
 
         h_splitter = QSplitter(Qt.Orientation.Horizontal)
-        h_splitter.addWidget(self._build_left_panel())
+        self._left_panel = self._build_left_panel()
+        h_splitter.addWidget(self._left_panel)
         h_splitter.addWidget(self._build_right_panel())
         h_splitter.setStretchFactor(0, 0)
         h_splitter.setStretchFactor(1, 1)
@@ -228,10 +224,6 @@ class SerialPage(QWidget):
         panel = QWidget()
         panel.setMinimumWidth(180)
         panel.setMaximumWidth(480)
-        panel.setStyleSheet(
-            "background: #FAFBFC;"
-            "border-right: 1px solid #E5E8EB;"
-        )
 
         v = QVBoxLayout(panel)
         v.setContentsMargins(10, 12, 10, 12)
@@ -648,11 +640,12 @@ class SerialPage(QWidget):
             self._lock_input(False)
 
     def _lock_input(self, locked: bool) -> None:
+        c = colors(self._theme)
         self._send_input.setReadOnly(locked)
         self._send_input.setStyleSheet(
-            "background: #F2F3F5; border: 1px solid #E5E8EB; border-radius: 4px;"
+            f"background:{c['surface_alt']}; border:1px solid {c['border']}; border-radius:4px;"
             if locked else
-            "background: white; border: 1px solid #D0D5DD; border-radius: 4px;"
+            f"background:{c['input']}; color:{c['text']}; border:1px solid {c['border_strong']}; border-radius:4px;"
         )
         cursor = Qt.CursorShape.ForbiddenCursor if locked else Qt.CursorShape.IBeamCursor
         self._send_input.setCursor(cursor)
@@ -669,8 +662,12 @@ class SerialPage(QWidget):
     # Helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _append_to(box: QPlainTextEdit, text: str, color: str) -> None:
+    def _append_to(self, box: QPlainTextEdit, text: str, color: str) -> None:
+        if self._theme == "dark":
+            color = {
+                "#2E7D32": "#65D38E", "#7B5EA7": "#C3A6FF",
+                "#C62828": "#FF7B7B", "#1565C0": "#70A4FF",
+            }.get(color, color)
         cursor = box.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = QTextCharFormat()
@@ -704,6 +701,22 @@ class SerialPage(QWidget):
         else:
             self._recv_mode_btn.setText(t("recv_mode_btn_str"))
             self._recv_mode_btn.setStyleSheet(MODE_STR_STYLE)
+
+    def apply_theme(self, theme: str) -> None:
+        self._theme = theme
+        c = colors(theme)
+        self._left_panel.setStyleSheet(
+            f"background:{c['surface_alt']}; border-right:1px solid {c['border']};")
+        self._send_label.setStyleSheet(f"font-weight:bold; color:{c['text_secondary']};")
+        self._recv_label.setStyleSheet(f"font-weight:bold; color:{c['text_secondary']};")
+        self._send_box.setStyleSheet(
+            f"background:{c['send_box']}; color:{c['text']}; border:1px solid {c['border']}; border-radius:6px;")
+        self._recv_box.setStyleSheet(
+            f"background:{c['recv_box']}; color:{c['text']}; border:1px solid {c['border']}; border-radius:6px;")
+        self._refresh_btn.apply_theme(theme)
+        self._lock_input(self._loop_chk.isChecked())
+        self._update_mode_btn()
+        self._update_recv_mode_btn()
 
     # ------------------------------------------------------------------
     # i18n

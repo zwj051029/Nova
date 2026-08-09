@@ -12,6 +12,7 @@ from PySide6.QtGui import QFont
 
 from i18n import Translator
 from serial_worker import SerialWorker
+from theme import colors
 
 BUFFER_SIZE = 500
 
@@ -188,6 +189,30 @@ class PidRow:
         self.precision_decrease_btn.setEnabled(self._decimals > 2)
         self.precision_increase_btn.setEnabled(self._decimals < 6)
 
+    def apply_theme(self, theme: str) -> None:
+        c = colors(theme)
+        self.send_btn.setStyleSheet(f"""
+            QPushButton {{ background:{c['accent']}; color:white; border:none; border-radius:4px;
+            padding:4px 8px; font-size:12px; font-weight:bold; }}
+            QPushButton:hover {{ background:{c['accent_hover']}; }}
+            QPushButton:disabled {{ background:{c['surface_alt']}; color:{c['disabled']}; }}
+        """)
+        self.precision_label.setStyleSheet(f"""
+            QLabel {{ background:{c['accent_soft']}; color:{c['accent']};
+            border:1px solid {c['accent_border']}; border-radius:3px;
+            padding:2px 3px; font-size:11px; font-weight:bold; }}
+        """)
+        icon_style = f"""
+            QPushButton {{ background:{c['accent_soft']}; color:{c['accent']};
+            border:1px solid {c['accent_border']}; border-radius:4px; padding:0;
+            font-size:15px; font-weight:bold; }}
+            QPushButton:hover {{ background:{c['hover']}; border-color:{c['accent']}; }}
+            QPushButton:pressed {{ background:{c['pressed']}; }}
+            QPushButton:disabled {{ background:{c['surface_alt']}; color:{c['disabled']}; border-color:{c['border']}; }}
+        """
+        self.precision_decrease_btn.setStyleSheet(icon_style)
+        self.precision_increase_btn.setStyleSheet(icon_style)
+
     def _update_slider_range(self) -> None:
         self.slider.setRange(0, 100 * (10 ** self._decimals))
 
@@ -284,7 +309,8 @@ class PidPage(QWidget):
         # 面板与波形图之间可拖拽
         page_splitter = QSplitter(Qt.Orientation.Horizontal)
         page_splitter.setHandleWidth(4)
-        page_splitter.addWidget(self._build_pid_panel())
+        self._pid_panel = self._build_pid_panel()
+        page_splitter.addWidget(self._pid_panel)
         page_splitter.addWidget(self._build_plot_widget())
         page_splitter.setStretchFactor(0, 0)
         page_splitter.setStretchFactor(1, 1)
@@ -294,10 +320,6 @@ class PidPage(QWidget):
     def _build_pid_panel(self) -> QWidget:
         panel = QWidget()
         panel.setMinimumWidth(430)
-        panel.setStyleSheet(
-            "background: #FAFBFC;"
-            "border-right: 1px solid #E5E8EB;"
-        )
         v = QVBoxLayout(panel)
         v.setContentsMargins(12, 12, 12, 12)
         v.setSpacing(8)
@@ -456,6 +478,26 @@ class PidPage(QWidget):
         self._pid_kp.send_btn.setEnabled(enabled)
         self._pid_ki.send_btn.setEnabled(enabled)
         self._pid_kd.send_btn.setEnabled(enabled)
+
+    def apply_theme(self, theme: str) -> None:
+        c = colors(theme)
+        self._pid_panel.setStyleSheet(
+            f"background:{c['surface_alt']}; border-right:1px solid {c['border']};")
+        for row in (self._pid_kp, self._pid_ki, self._pid_kd):
+            row.apply_theme(theme)
+        self._send_all_btn.setStyleSheet(f"""
+            QPushButton {{ background:{c['accent']}; color:white; border:none; border-radius:6px;
+            padding:10px 16px; font-size:14px; font-weight:bold; min-height:38px; }}
+            QPushButton:hover {{ background:{c['accent_hover']}; }}
+            QPushButton:disabled {{ background:{c['surface_alt']}; color:{c['disabled']}; }}
+        """)
+        self._plot_widget_ref.setBackground(c["plot"])
+        for axis_name in ("left", "bottom"):
+            axis = self._plot_widget_ref.getAxis(axis_name)
+            axis.setPen(pg.mkPen(c["border_strong"]))
+            axis.setTextPen(pg.mkPen(c["text_secondary"]))
+        if hasattr(self._legend, "setLabelTextColor"):
+            self._legend.setLabelTextColor(c["text"])
 
     # ------------------------------------------------------------------
     # i18n

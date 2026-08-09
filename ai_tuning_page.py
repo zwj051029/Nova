@@ -18,6 +18,7 @@ from serial_worker import SerialWorker
 from tuning.models import PIDGains, SafetyLimits, TuningConfig
 from tuning.session import TuningSession
 from tuning.storage import save_session
+from theme import colors
 
 
 PRIMARY_STYLE = """
@@ -66,6 +67,9 @@ class AiTuningPage(QWidget):
         self._proposed: PIDGains | None = None
         self._session_path: Path | None = None
         self._capture_t0 = 0.0
+        self._theme = "light"
+        self._status_color = "#86909C"
+        self._result_values: list[QLabel] = []
         self.on_toast = None
         self.on_data_sent = None
         self.on_pid_applied = None
@@ -205,13 +209,13 @@ class AiTuningPage(QWidget):
             "border-radius:5px; padding:7px;")
         layout.addWidget(self._hint)
 
-        plot = pg.PlotWidget()
-        plot.setBackground("w")
-        plot.showGrid(x=True, y=True, alpha=0.2)
-        self._sp_curve = plot.plot(pen=pg.mkPen("#2ECC71", width=2), name="Setpoint")
-        self._pv_curve = plot.plot(pen=pg.mkPen("#E74C3C", width=2), name="Actual")
-        plot.addLegend()
-        layout.addWidget(plot, 2)
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground("w")
+        self._plot.showGrid(x=True, y=True, alpha=0.2)
+        self._sp_curve = self._plot.plot(pen=pg.mkPen("#2ECC71", width=2), name="Setpoint")
+        self._pv_curve = self._plot.plot(pen=pg.mkPen("#E74C3C", width=2), name="Actual")
+        self._legend = self._plot.addLegend()
+        layout.addWidget(self._plot, 2)
 
         self._table = QTableWidget(0, 8)
         self._table.verticalHeader().setVisible(False)
@@ -250,6 +254,7 @@ class AiTuningPage(QWidget):
         value = QLabel("--")
         value.setAlignment(Qt.AlignmentFlag.AlignCenter)
         value.setStyleSheet("font-family:Consolas; font-size:14px; color:#165DFF;")
+        self._result_values.append(value)
         v.addWidget(value)
         layout.addWidget(box, 0, column)
         return value
@@ -428,7 +433,8 @@ class AiTuningPage(QWidget):
         for column, value in enumerate(values):
             item = QTableWidgetItem(value)
             if column == 7:
-                item.setForeground(QColor("#00B42A" if result.safe else "#F53F3F"))
+                c = colors(self._theme)
+                item.setForeground(QColor(c["success"] if result.safe else c["danger"]))
             self._table.setItem(row, column, item)
         best = self._session.best_result() if self._session else None
         if best:
@@ -478,9 +484,67 @@ class AiTuningPage(QWidget):
         self._abort_btn.setEnabled(self._session is not None)
 
     def _set_status(self, text: str, color: str) -> None:
+        self._status_color = color
         self._status.setText(text)
+        self._apply_status_style()
+
+    def _apply_status_style(self) -> None:
+        c = colors(self._theme)
+        semantic = {
+            "#165DFF": "accent", "#F53F3F": "danger", "#00B42A": "success",
+            "#722ED1": "purple", "#86909C": "muted",
+        }
+        status_color = c.get(semantic.get(self._status_color, "muted"), self._status_color)
         self._status.setStyleSheet(
-            f"background:{color}18; color:{color}; border-radius:10px; padding:4px 10px;")
+            f"background:{c['surface_alt']}; color:{status_color};"
+            f"border:1px solid {status_color}; border-radius:10px; padding:3px 9px;")
+
+    def apply_theme(self, theme: str) -> None:
+        self._theme = theme
+        c = colors(theme)
+        self._title.setStyleSheet(f"font-size:18px; font-weight:bold; color:{c['text']};")
+        self._apply_status_style()
+        primary = f"""
+            QPushButton {{ background:{c['accent']}; color:white; border:none; border-radius:5px;
+            padding:7px 12px; font-weight:bold; }}
+            QPushButton:hover {{ background:{c['accent_hover']}; }}
+            QPushButton:disabled {{ background:{c['surface_alt']}; color:{c['disabled']}; }}
+        """
+        secondary = f"""
+            QPushButton {{ background:{c['accent_soft']}; color:{c['accent']};
+            border:1px solid {c['accent_border']}; border-radius:5px; padding:7px 10px; font-weight:bold; }}
+            QPushButton:hover {{ background:{c['hover']}; border-color:{c['accent']}; }}
+            QPushButton:disabled {{ background:{c['surface_alt']}; color:{c['disabled']}; border-color:{c['border']}; }}
+        """
+        danger = f"""
+            QPushButton {{ background:{c['danger']}; color:white; border:none; border-radius:5px;
+            padding:8px 12px; font-weight:bold; }}
+            QPushButton:hover {{ background:#CB2634; }}
+            QPushButton:disabled {{ background:{c['surface_alt']}; color:{c['disabled']}; }}
+        """
+        self._baseline_btn.setStyleSheet(primary)
+        self._apply_btn.setStyleSheet(primary)
+        self._finish_btn.setStyleSheet(secondary)
+        self._suggest_btn.setStyleSheet(secondary)
+        self._load_manual_btn.setStyleSheet(secondary)
+        self._abort_btn.setStyleSheet(danger)
+        self._hint.setStyleSheet(
+            f"background:{c['warning_bg']}; color:{c['warning_text']};"
+            f"border:1px solid {c['warning_border']}; border-radius:5px; padding:7px;")
+        for value in self._result_values:
+            value.setStyleSheet(
+                f"font-family:Consolas; font-size:14px; color:{c['accent']};")
+        self._plot.setBackground(c["plot"])
+        for axis_name in ("left", "bottom"):
+            axis = self._plot.getAxis(axis_name)
+            axis.setPen(pg.mkPen(c["border_strong"]))
+            axis.setTextPen(pg.mkPen(c["text_secondary"]))
+        if hasattr(self._legend, "setLabelTextColor"):
+            self._legend.setLabelTextColor(c["text"])
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 7)
+            if item:
+                item.setForeground(QColor(c["success"] if item.text() == self._tr.tr("ai_safe") else c["danger"]))
 
     def _toast(self, message: str, success: bool) -> None:
         if self.on_toast:
