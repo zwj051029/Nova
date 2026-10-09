@@ -32,6 +32,8 @@ def telemetry(line: str) -> Frame | None:
     try:
         data = decode(line)
         if data and data.get("type") == "telemetry":
+            if type(data.get("channel")) is not int or type(data.get("seq")) is not int or data["seq"]<0:
+                return None
             frame = Frame(int(data["channel"]), float(data["sp"]), float(data["pv"]), float(data["out"]), float(data["time"]), int(data["seq"]))
         elif line.startswith(">"):
             channel, sp, pv, out = line[1:].split(",")
@@ -41,6 +43,6 @@ def telemetry(line: str) -> Frame | None:
         values = (frame.setpoint, frame.actual, frame.output)
         if frame.timestamp is not None:
             values += (frame.timestamp,)
-        return frame if all(math.isfinite(v) for v in values) else None
+        return frame if frame.channel>=0 and all(math.isfinite(v) for v in values) and (frame.timestamp is None or frame.timestamp>=0) else None
     except (ValueError, KeyError, TypeError, OverflowError):
         return None

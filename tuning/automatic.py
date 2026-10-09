@@ -25,6 +25,7 @@ class AutomaticTuner:
         self.request_count = 0
         self.token = uuid.uuid4().hex[:12]
         self.original = None
+        self.applied = None
         self.nominated = None
         self.verified = None
         self.next_gains = None
@@ -39,6 +40,7 @@ class AutomaticTuner:
         self.no_improvement = 0
         self.best_score = math.inf
         self.failure = ""
+        self.events = []
 
     @property
     def active(self):
@@ -46,6 +48,7 @@ class AutomaticTuner:
 
     def _status(self, state, message):
         self.state, self.message = state, message
+        self.events.append({"time":self.clock(),"state":state,"message":message})
         if self.on_status:
             self.on_status(state, message)
 
@@ -94,6 +97,7 @@ class AutomaticTuner:
         self.original = PIDGains(*map(float, ack["gains"]))
         if not all(math.isfinite(v) and 0 <= v <= 1e6 for v in self.original.as_array()):
             raise ValueError("设备参数读回无效")
+        self.applied = self.original
         limits = self.config.safety
         self._request("configure", self._configured, actual_min=limits.actual_min, actual_max=limits.actual_max,
                       output_limit=limits.output_abs_max, watchdog=max(.8, limits.telemetry_timeout))
@@ -106,7 +110,33 @@ class AutomaticTuner:
         self.next_gains = gains
         self.is_baseline = baseline
         self._status("applying", "下发参数并等待设备确认")
-        self._request("set_pid", self._pid_ack, gains=list(gains.as_array()))
+        try:
+            self._apply_bounded(gains, self._pid_ack)
+        except ValueError as exc:
+            self.fail(str(exc))
+
+    def _apply_bounded(self, goal, callback):
+        """Move through acknowledged bounded steps while output is stopped."""
+        values=[]
+        for current,target,absolute in zip(self.applied.as_array(),goal.as_array(),self.config.safety.max_absolute_gain_change.as_array()):
+            allowed=max(abs(current)*self.config.safety.max_relative_gain_change,absolute)
+            delta=target-current
+            step=math.floor((allowed+1e-12)*1e6)/1e6
+            value=round(current+math.copysign(min(abs(delta),step),delta),6)
+            if abs(delta)>5e-7 and abs(value-current)<5e-7:
+                raise ValueError("参数变化限制小于传输分辨率，无法安全过渡")
+            values.append(value)
+        requested=PIDGains(*values)
+        def acknowledged(ack):
+            actual=PIDGains(*map(float,ack["gains"]))
+            if any(not math.isfinite(a) or abs(a-b)>5e-7 for a,b in zip(actual.as_array(),requested.as_array())):
+                raise ValueError("设备实际应用的 PID 与请求不一致")
+            self.applied=actual
+            if all(abs(a-b)<=5e-7 for a,b in zip(actual.as_array(),goal.as_array())):
+                callback(ack)
+            else:
+                self._apply_bounded(goal,callback)
+        self._request("set_pid",acknowledged,gains=list(requested.as_array()))
 
     def _pid_ack(self, ack):
         actual = PIDGains(*map(float, ack["gains"]))
@@ -187,6 +217,8 @@ class AutomaticTuner:
             else:
                 self.stable.clear()
         if self.session.capturing:
+            if self.state == "capturing" and self.capture_device_start is None:
+                self.capture_device_start = frame.timestamp
             safe, reason = self.session.ingest(frame.setpoint, frame.actual, frame.output, frame.timestamp, frame.sequence)
             if not safe:
                 self.fail(reason)
@@ -219,15 +251,18 @@ class AutomaticTuner:
             return
         if self.state == "settling" and now-self.phase_started > self.config.stability_timeout:
             self.fail("初始状态未能稳定")
-        elif self.state == "prefill" and now-self.phase_started >= self.config.pre_seconds and not self.pending:
+        elif self.state == "prefill" and self.session.samples and self.session.samples[-1].timestamp >= self.config.pre_seconds and not self.pending:
             self._request("set_target", self._step_ack, value=self.config.step_target)
-        elif self.state == "capturing" and now-self.phase_started >= self.config.capture_seconds:
+        elif self.state == "capturing" and self.capture_device_start is not None and self.last_time-self.capture_device_start >= self.config.capture_seconds:
             self._finish_trial()
+        elif self.state in ("prefill", "capturing") and now-self.phase_started > 4*(self.config.capture_seconds+self.config.pre_seconds)+5:
+            self.fail("设备采样时间推进过慢，试验超时")
 
     def _step_ack(self, ack):
         if not math.isclose(float(ack["value"]), self.config.step_target, abs_tol=1e-9):
             raise ValueError("阶跃目标确认不一致")
         self.phase_started = self.clock()
+        self.capture_device_start = None
         self._status("capturing", f"采集第 {len(self.session.history)+1} 轮" + ("（最优复测）" if self.verifying else ""))
 
     def _publish(self, result):
@@ -246,7 +281,8 @@ class AutomaticTuner:
                 self.fail("最优参数复测退化，未接受结果")
                 return
             self.verified = result
-            self._request("stop", lambda _: self._status("review", "复测通过，设备已停止；请选择接受最优参数或恢复原参数"))
+            warning = "（采集窗口内尚未确认稳定）" if not math.isfinite(result.metrics.settling_time) else ""
+            self._request("stop", lambda _: self._status("review", "复测重复性通过"+warning+"，设备已停止；请选择接受最优参数或恢复原参数"))
             return
         if result.metrics.score < self.best_score - .01:
             self.best_score, self.no_improvement = result.metrics.score, 0
@@ -288,7 +324,10 @@ class AutomaticTuner:
             if self.on_applied:
                 self.on_applied(gains)
             self._status("accepted" if accept else "restored", "参数已确认保存到设备 RAM，输出保持停止；未写入 Flash")
-        self._request("set_pid", confirmed, gains=list(gains.as_array()))
+        try:
+            self._apply_bounded(gains, confirmed)
+        except ValueError as exc:
+            self.fail(str(exc))
 
     def fail(self, reason):
         if self.state in self.TERMINAL:
@@ -301,6 +340,7 @@ class AutomaticTuner:
         if self.session.samples and (self.session.capturing or self.state in ("prefill", "capturing")):
             self._publish(self.session.record_failure(reason))
         self.failure = reason
+        self.lease = False
         self.session.capturing = False
         self.pending = None
         self._status("stopping", reason + "；请求停止输出")

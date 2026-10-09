@@ -48,6 +48,9 @@ class TuningSession:
                timestamp: float | None = None, sequence: int | None = None) -> tuple[bool, str]:
         if not self.capturing:
             return True, ""
+        if len(self.samples) >= 200000:
+            self.capturing = False
+            return False, "单轮采样数超过 200000 上限"
         previous = self.samples[-1] if self.samples else None
         if sequence is not None:
             if self._last_sequence is not None and sequence != self._last_sequence + 1:

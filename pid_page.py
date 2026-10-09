@@ -1,12 +1,14 @@
 import collections
 import math
+import time
+import csv
 import platform
 import pyqtgraph as pg
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QPushButton, QGroupBox,
     QSlider, QDoubleSpinBox, QGridLayout, QSplitter,
-    QAbstractSpinBox,
+    QAbstractSpinBox, QCheckBox, QSpinBox, QFileDialog,
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
@@ -290,6 +292,7 @@ class PidRow:
             return
         self._syncing = True
         self.spinbox.setValue(round(self._slider_origin + v / (10 ** self._decimals), self._decimals))
+        self.slider.setValue(self._slider_position(self.spinbox.value()))
         self._syncing = False
 
     def _spinbox_changed(self, v: float) -> None:
@@ -311,6 +314,9 @@ class PidPage(QWidget):
         self._tr = Translator()
         self._buf_setpoint: collections.deque[float] = collections.deque(maxlen=BUFFER_SIZE)
         self._buf_actual: collections.deque[float] = collections.deque(maxlen=BUFFER_SIZE)
+        self._buf_output = collections.deque(maxlen=BUFFER_SIZE)
+        self._buf_time = collections.deque(maxlen=BUFFER_SIZE)
+        self._time_origin = None
         self.on_toast = None
         self._tr.on_change(self.retranslate)
         self._build_ui()
@@ -401,6 +407,25 @@ class PidPage(QWidget):
         group_layout.addWidget(self._send_all_btn)
 
         v.addWidget(self._pid_group_box)
+        tools=QGroupBox("波形分析 / Waveform")
+        controls=QVBoxLayout(tools)
+        self._channel=QSpinBox()
+        self._channel.setRange(0,65535)
+        self._channel.setValue(1)
+        self._channel.setPrefix("CH ")
+        self._channel.valueChanged.connect(self.clear_plot)
+        self._pause=QCheckBox("暂停显示 / Pause view")
+        self._show_output=QCheckBox("显示控制输出 / Output")
+        self._show_output.toggled.connect(lambda shown:self._curve_output.setVisible(shown))
+        self._cursor_enabled=QCheckBox("双游标测量 / Cursors")
+        self._cursor_enabled.toggled.connect(self._toggle_cursors)
+        self._measure=QLabel("Δt: --  ΔPV: --")
+        self._measure.setWordWrap(True)
+        export=QPushButton("导出当前波形 / Export CSV")
+        export.clicked.connect(self._export_waveform)
+        for widget in (self._channel,self._pause,self._show_output,self._cursor_enabled,self._measure,export):
+            controls.addWidget(widget)
+        v.addWidget(tools)
         v.addStretch()
         return panel
 
@@ -426,6 +451,16 @@ class PidPage(QWidget):
             antialias=True,
         )
         self._plot_widget_ref = pw
+        pw.setLabel("bottom", "Time", units="s")
+        self._curve_output = pw.plot([], pen=pg.mkPen("#F59E0B",width=1),name="Output")
+        self._curve_output.setVisible(False)
+        self._cursors=[]
+        for position in (0,1):
+            cursor=pg.InfiniteLine(pos=position,angle=90,movable=True,pen=pg.mkPen("#38BDF8",style=Qt.PenStyle.DashLine))
+            cursor.setVisible(False)
+            cursor.sigPositionChanged.connect(self._measure_cursors)
+            pw.addItem(cursor,ignoreBounds=True)
+            self._cursors.append(cursor)
         return pw
 
     # ------------------------------------------------------------------
@@ -433,22 +468,71 @@ class PidPage(QWidget):
     # ------------------------------------------------------------------
 
     def ingest_line(self, line: str) -> None:
-        parsed = parse_line(line)
-        if parsed is None:
+        frame=telemetry(line)
+        if frame is None or frame.channel != self._channel.value():
             return
-        _, setpoint, actual, _ = parsed
-        self._buf_setpoint.append(setpoint)
-        self._buf_actual.append(actual)
+        timestamp=frame.timestamp if frame.timestamp is not None else time.monotonic()
+        if self._time_origin is None or (self._buf_time and timestamp-self._time_origin < self._buf_time[-1]):
+            self.clear_plot()
+            self._time_origin=timestamp
+        self._buf_time.append(timestamp-self._time_origin)
+        self._buf_setpoint.append(frame.setpoint)
+        self._buf_actual.append(frame.actual)
+        self._buf_output.append(frame.output)
 
     def refresh_plot(self) -> None:
-        self._curve_setpoint.setData(list(self._buf_setpoint))
-        self._curve_actual.setData(list(self._buf_actual))
+        if self._pause.isChecked():
+            return
+        x=list(self._buf_time)
+        self._curve_setpoint.setData(x,list(self._buf_setpoint))
+        self._curve_actual.setData(x,list(self._buf_actual))
+        self._curve_output.setData(x,list(self._buf_output))
 
     def clear_plot(self) -> None:
         self._buf_setpoint.clear()
         self._buf_actual.clear()
+        self._buf_output.clear()
+        self._buf_time.clear()
+        self._time_origin=None
         self._curve_setpoint.setData([])
         self._curve_actual.setData([])
+        self._curve_output.setData([])
+
+    def _toggle_cursors(self, visible):
+        for index,cursor in enumerate(self._cursors):
+            cursor.setVisible(visible)
+            if self._buf_time:
+                cursor.setValue(self._buf_time[0 if index==0 else -1])
+        self._measure_cursors()
+
+    def _measure_cursors(self):
+        x,y=self._curve_actual.getData()
+        if x is None or len(x)==0:
+            self._measure.setText("Δt: --  ΔPV: --")
+            return
+        a,b=(cursor.value() for cursor in self._cursors)
+        ia=min(range(len(x)),key=lambda i:abs(x[i]-a))
+        ib=min(range(len(x)),key=lambda i:abs(x[i]-b))
+        self._measure.setText(f"Δt: {b-a:.6g} s\nΔPV: {y[ib]-y[ia]:.6g}")
+
+    def _export_waveform(self):
+        filename,_=QFileDialog.getSaveFileName(self,"导出波形","nova_waveform.csv","CSV (*.csv)")
+        if not filename:
+            return
+        try:
+            with open(filename,"w",encoding="utf-8-sig",newline="") as stream:
+                writer=csv.writer(stream)
+                writer.writerow(["time_s","setpoint","actual","output"])
+                x,actual=self._curve_actual.getData()
+                _,setpoint=self._curve_setpoint.getData()
+                _,output=self._curve_output.getData()
+                if x is not None:
+                    writer.writerows(zip(x,setpoint,actual,output))
+            if self.on_toast:
+                self.on_toast("波形已导出",True)
+        except OSError as exc:
+            if self.on_toast:
+                self.on_toast(str(exc),False)
 
     def current_values(self) -> tuple[float, float, float]:
         return self._pid_kp.value(), self._pid_ki.value(), self._pid_kd.value()
@@ -532,7 +616,7 @@ class PidPage(QWidget):
         self._send_all_btn.setText(t("send_all_btn"))
 
         self._plot_widget_ref.setLabel("left", t("plot_left_axis"), **{"font-size": "10pt"})
-        self._plot_widget_ref.setLabel("bottom", t("plot_bottom_axis"), **{"font-size": "10pt"})
+        self._plot_widget_ref.setLabel("bottom", "Time / 时间", units="s", **{"font-size": "10pt"})
         self._legend.clear()
         self._legend.addItem(self._curve_setpoint, t("curve_setpoint"))
         self._legend.addItem(self._curve_actual, t("curve_actual"))

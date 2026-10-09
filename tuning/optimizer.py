@@ -41,6 +41,9 @@ class BayesianPIDOptimizer:
         seen = {tuple(round(v, 6) for v in r.gains.as_array()) for r in history}
         resolution = np.asarray(self.config.gain_resolution.as_array())
         candidates = np.unique(np.round(np.round(candidates / resolution) * resolution, 6), axis=0)
+        for i,active in enumerate(self.config.active_axes()):
+            if not active:
+                candidates[:,i]=reference.as_array()[i]
         candidates = np.asarray([row for row in candidates if tuple(row) not in seen
                                  and validate_candidate(PIDGains(*row), reference, self.config)[0]])
         if not len(candidates):
@@ -75,7 +78,8 @@ class BayesianPIDOptimizer:
         step = min(step, allowed * 0.5)
         values[axis] = min(upper[axis], values[axis] + step)
         resolution = self.config.gain_resolution.as_array()
-        values = [round(round(v / r) * r, 6) for v, r in zip(values, resolution)]
+        values = [round(round(v / r) * r, 6) if active else reference.as_array()[i]
+                  for i,(v,r,active) in enumerate(zip(values,resolution,self.config.active_axes()))]
         candidate = PIDGains(*values)
         ok, _ = validate_candidate(candidate, reference, self.config)
         return candidate if ok and candidate != best else None

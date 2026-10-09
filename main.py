@@ -307,6 +307,8 @@ class MainWindow(QMainWindow):
 
     def _flush_lines(self) -> None:
         self._pid_page.set_send_enabled(self._worker.is_open() and self._worker.owner is None)
+        self._serial_page.set_control_locked(self._worker.owner is not None)
+        self._status_indicator.update_tx(self._tr.tr, self._worker.tx_bytes)
         # 刷新原始数据到接收区
         if self._pending_chunks:
             chunks = self._pending_chunks
@@ -339,8 +341,14 @@ class MainWindow(QMainWindow):
     def _on_ai_pid_applied(self, gains: PIDGains) -> None:
         self._pid_page.set_values(gains.kp, gains.ki, gains.kd)
 
-    def _restore_ai_baseline(self) -> None:
+    def _restore_ai_baseline(self) -> bool:
+        auto=self._ai_page._auto
+        if auto and auto.active:
+            if auto.state != "stopping":
+                auto.stop()
+            return not auto.active
         self._ai_page.restore_baseline()
+        return True
 
     def _show_toast(self, message: str, success: bool) -> None:
         old = getattr(self, "_toast", None)
@@ -369,6 +377,8 @@ class MainWindow(QMainWindow):
         else:
             self._connected_port = ""
             self._connected_baud = 0
+            self._pending_lines.clear()
+            self._pending_chunks.clear()
             self._status_indicator.set_disconnected(self._tr.tr)
             self._pid_page.clear_plot()
 

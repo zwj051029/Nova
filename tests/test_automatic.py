@@ -116,3 +116,46 @@ class AutomaticTests(unittest.TestCase):
         h.queue[0]=encode(first).decode()
         self.assertEqual(h.run(),"aborted")
         self.assertIn("不支持",h.tuner.message)
+
+    def test_failure_preserved_once_and_heartbeat_stops(self):
+        h=Harness()
+        h.run(until=("capturing","aborted"))
+        count=len(h.tuner.session.history)
+        h.tuner.fail("injected failure")
+        self.assertFalse(h.tuner.lease)
+        self.assertEqual(len(h.tuner.session.history),count+1)
+        self.assertTrue(h.tuner.session.history[-1].samples)
+        h.run()
+        self.assertEqual(len(h.tuner.session.history),count+1)
+
+    def test_other_channel_ignored_and_device_time_capture(self):
+        h=Harness()
+        h.run(until=("capturing","aborted"))
+        h.tuner.handle_line(encode({"type":"fault","channel":2,"reason":"other"}).decode())
+        self.assertEqual(h.tuner.state,"capturing")
+        h.run()
+        trial=h.tuner.session.history[0]
+        after=[sample for sample in trial.samples if sample.setpoint==h.config.step_target]
+        self.assertGreaterEqual(after[-1].timestamp-after[0].timestamp,h.config.capture_seconds-.021)
+
+    def test_final_restore_uses_bounded_acknowledged_steps(self):
+        h=Harness()
+        self.assertEqual(h.run(),"review",h.tuner.message)
+        h.tuner.original=PIDGains(2,.8,.01)
+        changes=[]
+        original=h.device.command
+        def capture(message):
+            if message.get("cmd")=="set_pid":
+                before=h.device.gains
+                result=original(message)
+                changes.append((before,h.device.gains))
+                return result
+            return original(message)
+        h.device.command=capture
+        h.tuner.decide(False)
+        h.run(until=("restored","aborted"))
+        self.assertEqual(h.tuner.state,"restored",h.tuner.message)
+        self.assertGreater(len(changes),1)
+        for before,after in changes:
+            for a,b,absolute in zip(before.as_array(),after.as_array(),h.config.safety.max_absolute_gain_change.as_array()):
+                self.assertLessEqual(abs(b-a),max(abs(a)*.2,absolute)+1e-6)

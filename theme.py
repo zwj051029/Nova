@@ -100,6 +100,10 @@ QWidget {{
     color: {c['text']};
 }}
 QMainWindow, QDialog, QStackedWidget {{ background: {c['window']}; }}
+QScrollArea, QScrollArea > QWidget > QWidget {{ background: {c['window']}; }}
+QTabWidget::pane {{ border: 1px solid {c['border']}; background: {c['window']}; }}
+QTabBar::tab {{ background: {c['surface_alt']}; color: {c['text_secondary']}; padding: 8px 12px; }}
+QTabBar::tab:selected {{ background: {c['accent_soft']}; color: {c['accent']}; }}
 QMenuBar {{ background: {c['surface']}; color: {c['text']}; border-bottom: 1px solid {c['border']}; }}
 QMenuBar::item {{ padding: 5px 10px; background: transparent; }}
 QMenuBar::item:selected {{ background: {c['hover']}; border-radius: 4px; }}

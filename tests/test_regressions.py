@@ -1,12 +1,18 @@
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import unittest
-from unittest.mock import Mock
+import tempfile
+from pathlib import Path
+from unittest.mock import Mock, patch
 from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QTest
+from PySide6.QtCore import Qt
 from main import MainWindow
 from serial_worker import LineFramer, SerialWorker
 from tuning.models import PIDGains, ResponseMetrics, TrialResult, TuningConfig
 from tuning.optimizer import BayesianPIDOptimizer
+from tuning.config_dialog import ConfigDialog
+from tuning.storage import save_session
 
 
 class RegressionTests(unittest.TestCase):
@@ -58,3 +64,71 @@ class RegressionTests(unittest.TestCase):
         for seed in range(20):
             candidate, _ = BayesianPIDOptimizer(TuningConfig(), seed).suggest(history, baseline)
             self.assertNotIn(candidate, gains)
+
+    def test_keyboard_precision_and_streamed_utf8(self):
+        window=MainWindow()
+        row=window._pid_page._pid_ki
+        editor=row.spinbox.lineEdit()
+        editor.selectAll()
+        QTest.keyClicks(editor,"0.000123")
+        self.app.processEvents()
+        self.assertEqual(row._decimals,6)
+        self.assertEqual(row.formatted_value(),"0.000123")
+        QTest.keyClick(editor,Qt.Key.Key_Backspace)
+        self.app.processEvents()
+        self.assertEqual(row._decimals,5)
+        page=window._serial_page
+        text="中文串口\n".encode()
+        page.append_received_bytes(text[:2])
+        page.append_received_bytes(text[2:])
+        self.assertEqual(page._recv_box.toPlainText(),"中文串口\n")
+        window._apply_theme("dark",persist=False)
+        window._apply_theme("light",persist=False)
+        self.assertEqual(page._recv_box.toPlainText(),"中文串口\n")
+        window.close()
+
+    def test_hex_raw_and_signal_controls(self):
+        window=MainWindow()
+        port=Mock(is_open=True)
+        port.write.side_effect=lambda data:len(data)
+        window._worker._port=port
+        page=window._serial_page
+        page._toggle_mode()
+        page._send_input.setText("AA 55 0D 0A")
+        page._do_send()
+        port.write.assert_called_once_with(b"\xaa\x55\r\n")
+        page._dtr_chk.setChecked(True)
+        self.assertTrue(port.dtr)
+        window._worker.acquire("ai")
+        page._do_send()
+        self.assertEqual(port.write.call_count,1)
+        window._worker.release("ai")
+        window.close()
+
+    def test_profile_roundtrip_independent_ranges(self):
+        window=MainWindow()
+        page=window._ai_page
+        config=TuningConfig(gain_max=PIDGains(5,.001,.00001),gain_resolution=PIDGains(.001,.000001,.000001),locked=(False,True,False))
+        dialog=ConfigDialog(config,window)
+        updated=dialog.result_config()
+        updated.validate()
+        page._apply_config(updated)
+        self.assertEqual(page._config().gain_max,config.gain_max)
+        self.assertEqual(page._config().locked,config.locked)
+        window.close()
+
+    def test_history_is_readonly_and_never_sends(self):
+        window=MainWindow()
+        history=[TrialResult(1,PIDGains(1,.5,0),ResponseMetrics(True,score=10),True,True)]
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as directory:
+            path=save_session(Path(directory),history[0].gains,TuningConfig(),history)
+            before=path.read_bytes()
+            with patch("ai_tuning_page.QFileDialog.getOpenFileName",return_value=(str(path),"JSON")),patch.object(window._worker,"write") as write:
+                window._ai_page._open_history()
+                window._ai_page._save_session()
+                window._ai_page._abort()
+                self.assertTrue(window._ai_page._history_only)
+                self.assertFalse(window._ai_page._apply_btn.isEnabled())
+                write.assert_not_called()
+                self.assertEqual(path.read_bytes(),before)
+        window.close()

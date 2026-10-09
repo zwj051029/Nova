@@ -8,6 +8,8 @@ from tuning.models import PIDGains, TelemetrySample, TuningConfig, TrialResult, 
 from tuning.protocol import encode, decode, telemetry
 from tuning.session import TuningSession
 from tuning.storage import save_session, load_session
+from tuning.optimizer import BayesianPIDOptimizer
+from tuning.simulator import FirstOrderPlant
 
 
 class QualityTests(unittest.TestCase):
@@ -61,3 +63,17 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(frame["type"],"fault")
         self.assertIsNone(telemetry(">1,nan,1,1"))
         self.assertIsNone(decode('@{"x":NaN}'))
+
+    def test_optimizer_improves_repeatable_simulated_benchmark(self):
+        config=TuningConfig()
+        optimizer=BayesianPIDOptimizer(config)
+        gains=PIDGains(1,.5,0)
+        history=[]
+        for i in range(12):
+            samples=FirstOrderPlant().run_step(gains)
+            metrics=analyze_step_response(samples,config)
+            history.append(TrialResult(i+1,gains,metrics,metrics.valid and metrics.overshoot_percent<=30,i==0,samples))
+            if i<11:
+                gains,_=optimizer.suggest(history,gains)
+        best=min(result.metrics.score for result in history if result.safe)
+        self.assertLess(best,history[0].metrics.score*.75)

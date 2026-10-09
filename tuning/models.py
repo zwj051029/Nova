@@ -108,6 +108,11 @@ class TuningConfig:
             raise ValueError("安全限制必须为有限数")
         if limits.actual_min >= limits.actual_max or limits.output_abs_max <= 0 or not 0 < limits.max_relative_gain_change <= 1:
             raise ValueError("安全范围无效")
+        weights=(self.weight_iae,self.weight_overshoot,self.weight_settling,self.weight_steady_error,self.weight_output_variation)
+        if not all(math.isfinite(v) and v>=0 for v in weights) or sum(weights)<=0:
+            raise ValueError("评分权重无效")
+        if not 1<=self.patience<=100 or not math.isfinite(self.target_score) or self.target_score<0 or limits.max_overshoot_percent<0:
+            raise ValueError("停止条件无效")
 
     def active_axes(self) -> tuple[bool, bool, bool]:
         return tuple(not self.locked[i] and i < {"P": 1, "PI": 2, "PID": 3}[self.mode] for i in range(3))

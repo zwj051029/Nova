@@ -187,6 +187,7 @@ class SerialPage(QWidget):
         self.on_before_disconnect = None
         self.on_data_sent = None
         self.on_toast = None
+        self._disconnecting = False
         self._is_recv_hex = False  # False=字符串, True=十六进制
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
 
@@ -553,13 +554,13 @@ class SerialPage(QWidget):
     def _toggle_serial(self) -> None:
         t = self._tr.tr
         if self._worker.is_open():
+            if self._disconnecting:
+                return
+            self._disconnecting = True
             self._loop_timer.stop()
             self._loop_chk.setChecked(False)
             self._lock_input(False)
-            if self.on_before_disconnect:
-                self.on_before_disconnect()
-            self._worker.close()
-            self._update_controls(opened=False)
+            self._finish_disconnect()
         else:
             port = self._port_combo.currentText()
             try:
@@ -588,10 +589,30 @@ class SerialPage(QWidget):
             except Exception as e:
                 self._append_to(self._recv_box, t("error_open_port") + str(e), "#C62828")
 
+    def _finish_disconnect(self):
+        if self.on_before_disconnect and self.on_before_disconnect() is False:
+            QTimer.singleShot(100,self._finish_disconnect)
+            return
+        self._worker.close()
+        self._disconnecting=False
+        self._update_controls(False)
+        self._decoder.reset()
+
     def handle_disconnect(self) -> None:
+        self._disconnecting=False
         self._loop_chk.setChecked(False)
         self._loop_timer.stop()
         self._update_controls(False)
+        self._decoder.reset()
+
+    def set_control_locked(self, locked):
+        enabled=self._worker.is_open() and not locked
+        self._send_btn.setEnabled(enabled)
+        self._loop_chk.setEnabled(enabled)
+        for checkbox in (self._dtr_chk,self._rts_chk,self._brk_chk):
+            checkbox.setEnabled(not locked)
+        if locked and self._loop_chk.isChecked():
+            self._loop_chk.setChecked(False)
 
     def _update_signals(self) -> None:
         try:
@@ -713,6 +734,7 @@ class SerialPage(QWidget):
 
     def _clear_recv_box(self) -> None:
         self._recv_box.clear()
+        self._decoder.reset()
 
     def _update_mode_btn(self) -> None:
         t = self._tr.tr
@@ -746,6 +768,31 @@ class SerialPage(QWidget):
         self._recv_box.setStyleSheet(
             f"background:{c['recv_box']}; color:{c['text']}; border:1px solid {c['border']}; border-radius:6px;")
         self._refresh_btn.apply_theme(theme)
+        mapping={"#2e7d32":"#65d38e","#7b5ea7":"#c3a6ff","#c62828":"#ff7b7b","#1565c0":"#70a4ff"}
+        if theme=="light":
+            mapping={v:k for k,v in mapping.items()}
+        for box in (self._send_box,self._recv_box):
+            position=box.verticalScrollBar().value()
+            document=box.document()
+            changes=[]
+            block=document.begin()
+            while block.isValid():
+                iterator=block.begin()
+                while not iterator.atEnd():
+                    fragment=iterator.fragment()
+                    color=fragment.charFormat().foreground().color().name()
+                    if color in mapping:
+                        changes.append((fragment.position(),fragment.length(),mapping[color]))
+                    iterator+=1
+                block=block.next()
+            for start,length,color in changes:
+                cursor=QTextCursor(document)
+                cursor.setPosition(start)
+                cursor.setPosition(start+length,QTextCursor.MoveMode.KeepAnchor)
+                fmt=QTextCharFormat()
+                fmt.setForeground(QColor(color))
+                cursor.mergeCharFormat(fmt)
+            box.verticalScrollBar().setValue(position)
         self._lock_input(self._loop_chk.isChecked())
         self._update_mode_btn()
         self._update_recv_mode_btn()

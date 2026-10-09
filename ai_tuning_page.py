@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import math
 import time
+import json
+import os
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pyqtgraph as pg
@@ -10,16 +13,19 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout,
     QHeaderView, QLabel, QPushButton, QSpinBox, QSplitter, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget, QComboBox, QScrollArea, QMessageBox,
+    QTableWidgetItem, QVBoxLayout, QWidget, QComboBox, QScrollArea, QMessageBox, QFileDialog, QDialog,
 )
 
 from i18n import Translator
 from serial_worker import SerialWorker
 from tuning.models import PIDGains, SafetyLimits, TuningConfig
 from tuning.session import TuningSession
-from tuning.storage import save_session
+from tuning.storage import save_session, load_session, atomic_json, config_from_dict
 from tuning.protocol import telemetry
 from tuning.automatic import AutomaticTuner
+from tuning.config_dialog import ConfigDialog
+from tuning.reporting import explain, export_csv, export_html
+from tuning.cloud_advisor import CloudAdvisorDialog
 from theme import colors
 
 
@@ -79,6 +85,7 @@ class AiTuningPage(QWidget):
         self.baseline_provider = None
         self._auto = None
         self._history_only = False
+        self._profile_config = TuningConfig()
         self._build_ui()
         self._timer = QTimer(self)
         self._timer.setInterval(200)
@@ -123,6 +130,27 @@ class AiTuningPage(QWidget):
         layout.setContentsMargins(0, 0, 6, 0)
         layout.setSpacing(8)
 
+        self._profile_btn = QPushButton("设备档案与独立范围 / Profile")
+        self._profile_btn.clicked.connect(self._edit_profile)
+        layout.addWidget(self._profile_btn)
+        profile_actions = QHBoxLayout()
+        save_profile = QPushButton("保存方案 / Save")
+        load_profile = QPushButton("加载方案 / Load")
+        self._save_profile_btn=save_profile
+        self._load_profile_btn=load_profile
+        save_profile.clicked.connect(self._save_profile)
+        load_profile.clicked.connect(self._load_profile)
+        demo_profile=QPushButton("模拟预设 / Demo")
+        self._demo_profile_btn=demo_profile
+        demo_profile.clicked.connect(self._demo_profile)
+        profile_actions.addWidget(save_profile)
+        profile_actions.addWidget(load_profile)
+        profile_actions.addWidget(demo_profile)
+        layout.addLayout(profile_actions)
+        self._profile_summary = QLabel("Generic · PID · Channel 1")
+        self._profile_summary.setWordWrap(True)
+        layout.addWidget(self._profile_summary)
+
         self._baseline_group = QGroupBox()
         baseline_form = QFormLayout(self._baseline_group)
         self._kp = self._gain_spin(1.0)
@@ -140,8 +168,10 @@ class AiTuningPage(QWidget):
         self._search_group = QGroupBox()
         search_form = QFormLayout(self._search_group)
         self._gain_max = self._gain_spin(100.0)
+        self._gain_max.setToolTip("修改此处会覆盖三个参数上限；独立范围请使用设备档案。")
+        self._gain_max.valueChanged.connect(self._uniform_max)
         self._relative_change = QSpinBox()
-        self._relative_change.setRange(5, 100)
+        self._relative_change.setRange(1, 100)
         self._relative_change.setValue(20)
         self._relative_change.setSuffix(" %")
         self._max_trials = QSpinBox()
@@ -230,6 +260,19 @@ class AiTuningPage(QWidget):
         automatic.addWidget(self._restore_original, 1, 2)
         layout.addLayout(automatic)
 
+        library = QHBoxLayout()
+        self._history_btn = QPushButton("打开记录 / History")
+        self._export_btn = QPushButton("导出报告 / Export")
+        self._explain_btn = QPushButton("调参解释 / Insights")
+        self._history_btn.clicked.connect(self._open_history)
+        self._export_btn.clicked.connect(self._export_history)
+        self._explain_btn.clicked.connect(self._show_insights)
+        self._cloud_btn=QPushButton("云端解释 / Cloud")
+        self._cloud_btn.clicked.connect(self._show_cloud_insights)
+        for button in (self._history_btn,self._export_btn,self._explain_btn,self._cloud_btn):
+            library.addWidget(button)
+        layout.addLayout(library)
+
         self._hint = QLabel()
         self._hint.setWordWrap(True)
         self._hint.setStyleSheet(
@@ -245,6 +288,10 @@ class AiTuningPage(QWidget):
         self._baseline_curve = self._plot.plot(pen=pg.mkPen("#86909C", width=1, style=Qt.PenStyle.DashLine), name="Baseline")
         self._best_curve = self._plot.plot(pen=pg.mkPen("#9B71F5", width=2), name="Best")
         self._legend = self._plot.addLegend()
+        for curve,name in ((self._sp_curve,"目标 / SP"),(self._pv_curve,"当前 / PV"),
+                           (self._baseline_curve,"基准 / Baseline"),(self._best_curve,"最优 / Best")):
+            self._legend.addItem(curve,name)
+        self._plot.setLabel("bottom","Time / 时间",units="s")
         layout.addWidget(self._plot, 2)
 
         self._table = QTableWidget(0, 8)
@@ -254,6 +301,7 @@ class AiTuningPage(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.itemSelectionChanged.connect(self._preview_trial)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self._table, 1)
         return panel
 
@@ -269,7 +317,7 @@ class AiTuningPage(QWidget):
     def _wide_spin(value: float) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
         spin.setRange(-1_000_000_000.0, 1_000_000_000.0)
-        spin.setDecimals(3)
+        spin.setDecimals(6)
         spin.setValue(value)
         return spin
 
@@ -284,6 +332,7 @@ class AiTuningPage(QWidget):
         box.setProperty("card_index", column)
         v = QVBoxLayout(box)
         value = QLabel("--")
+        value.setWordWrap(True)
         value.setAlignment(Qt.AlignmentFlag.AlignCenter)
         value.setStyleSheet("font-family:Consolas; font-size:14px; color:#165DFF;")
         self._result_values.append(value)
@@ -292,11 +341,8 @@ class AiTuningPage(QWidget):
         return value
 
     def _config(self) -> TuningConfig:
-        gain_max = self._gain_max.value()
-        return TuningConfig(
-            gain_min=PIDGains(0.0, 0.0, 0.0),
-            gain_max=PIDGains(gain_max, gain_max, gain_max),
-            safety=SafetyLimits(
+        return replace(self._profile_config,
+            safety=replace(self._profile_config.safety,
                 actual_min=self._actual_min.value(),
                 actual_max=self._actual_max.value(),
                 output_abs_max=abs(self._output_max.value()),
@@ -307,6 +353,128 @@ class AiTuningPage(QWidget):
             sample_period_seconds=self._sample_period_ms.value() / 1000.0,
             max_trials=self._max_trials.value(),
         )
+
+    def _uniform_max(self, value):
+        self._profile_config.gain_max = PIDGains(value,value,value)
+
+    def _demo_profile(self):
+        self._apply_config(TuningConfig(device_name="Nova simulated plant",sample_period_seconds=.02,
+            capture_seconds=4,max_trials=5,gain_max=PIDGains(5,2,.2),
+            safety=SafetyLimits(actual_min=-2,actual_max=2,output_abs_max=10)))
+        for spin,value in zip((self._kp,self._ki,self._kd),(1,.5,0)):
+            spin.setValue(value)
+        self._hint.setText("模拟预设已加载（未发送指令）。请选择 sim:// 串口，再开始自动试验。")
+
+    def _apply_config(self, config):
+        self._profile_config = config
+        self._gain_max.blockSignals(True)
+        self._gain_max.setValue(max(config.gain_max.as_array()))
+        self._gain_max.blockSignals(False)
+        self._relative_change.setValue(round(config.safety.max_relative_gain_change*100))
+        self._max_trials.setValue(config.max_trials)
+        self._capture_seconds.setValue(config.capture_seconds)
+        self._sample_period_ms.setValue(config.sample_period_seconds*1000)
+        self._actual_min.setValue(config.safety.actual_min)
+        self._actual_max.setValue(config.safety.actual_max)
+        self._output_max.setValue(config.safety.output_abs_max)
+        self._overshoot_max.setValue(config.safety.max_overshoot_percent)
+        self._profile_summary.setText(f"{config.device_name} · {config.mode} · CH {config.channel}\n"
+            f"{config.initial_target:g} → {config.step_target:g} {config.unit}\n"
+            f"Max: {config.gain_max.formatted()}")
+        if config.mode == "P":
+            self._ki.setValue(0)
+        if config.mode in ("P","PI"):
+            self._kd.setValue(0)
+
+    def _edit_profile(self):
+        dialog=ConfigDialog(self._config(),self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._apply_config(dialog.result_config())
+
+    def _save_profile(self):
+        filename,_=QFileDialog.getSaveFileName(self,"保存参数方案", "nova_profile.json", "JSON (*.json)")
+        if not filename:
+            return
+        try:
+            config=self._config()
+            config.validate()
+            atomic_json(Path(filename),{"schema_version":1,"config":asdict(config),"gains":asdict(self._gains_from_inputs())})
+            self._toast("方案已保存（未下发设备）",True)
+        except (ValueError,OSError) as exc:
+            self._toast(str(exc),False)
+
+    def _load_profile(self):
+        filename,_=QFileDialog.getOpenFileName(self,"加载参数方案","","JSON (*.json)")
+        if not filename:
+            return
+        try:
+            data=json.loads(Path(filename).read_text(encoding="utf-8"))
+            if data.get("schema_version") != 1:
+                raise ValueError("不支持的档案版本")
+            config=config_from_dict(data["config"])
+            gains=PIDGains(**data["gains"])
+            if not all(math.isfinite(v) and 0<=v<=1e6 for v in gains.as_array()):
+                raise ValueError("档案参数无效")
+            self._apply_config(config)
+            for spin,value in zip((self._kp,self._ki,self._kd),gains.as_array()):
+                spin.setValue(value)
+            self._toast("方案已加载；未发送任何设备命令",True)
+        except (OSError,ValueError,TypeError,KeyError) as exc:
+            self._toast(str(exc),False)
+
+    def _open_history(self):
+        base=QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+        filename,_=QFileDialog.getOpenFileName(self,"打开历史（只读回放）",str(Path(base)/"tuning_sessions"),"JSON (*.json)")
+        if not filename:
+            return
+        try:
+            baseline,config,history=load_session(Path(filename))
+            self._auto=None
+            self._proposed=None
+            self._session=TuningSession(config)
+            self._session.set_baseline(baseline)
+            self._session.history=history
+            self._history_only=True
+            self._session_path=Path(filename)
+            self._table.setRowCount(0)
+            self._baseline_value.setText(baseline.formatted())
+            self._best_value.setText("--")
+            for result in history:
+                self._append_result(result)
+            if history:
+                self._table.selectRow(0)
+            self._hint.setText("历史只读回放：未修改设备参数。可选择不同试验、查看解释或导出报告。")
+            self._set_status("History / 只读", "#86909C")
+            self._refresh_buttons()
+        except (OSError,ValueError,KeyError,TypeError) as exc:
+            self._toast(str(exc),False)
+
+    def _export_history(self):
+        if not self._session or not self._session.history:
+            return
+        filename,kind=QFileDialog.getSaveFileName(self,"导出试验","nova_report.html",
+            "HTML report (*.html);;CSV telemetry (*.csv);;JSON session (*.json)")
+        if not filename:
+            return
+        try:
+            path=Path(filename)
+            if "CSV" in kind:
+                export_csv(path,self._session.history)
+            elif "JSON" in kind:
+                save_session(path.parent,self._session.baseline,self._session.config,self._session.history,path)
+            else:
+                export_html(path,self._session.history,self._session.config)
+            self._toast("报告已导出",True)
+        except (OSError,ValueError) as exc:
+            self._toast(str(exc),False)
+
+    def _show_insights(self):
+        if self._session:
+            QMessageBox.information(self,"调参解释 / Local insights",explain(self._session.history,self._session.config))
+
+    def _show_cloud_insights(self):
+        if self._session:
+            CloudAdvisorDialog(self._session.history,self._session.config,self).exec()
 
     def _gains_from_inputs(self) -> PIDGains:
         return PIDGains(self._kp.value(), self._ki.value(), self._kd.value())
@@ -330,6 +498,7 @@ class AiTuningPage(QWidget):
             self._auto = AutomaticTuner(config, lambda data: self._worker.write(data, owner="ai"),
                 on_result=self._auto_result, on_status=self._auto_status, on_applied=self.on_pid_applied)
             self._session = self._auto.session
+            self._proposed=None
             self._history_only = False
             self._session_path = None
             self._table.setRowCount(0)
@@ -566,13 +735,17 @@ class AiTuningPage(QWidget):
             self._baseline_curve.setData([s.timestamp for s in baseline.samples], [s.actual for s in baseline.samples])
 
     def _save_session(self) -> None:
-        if not self._session or not self._session.baseline or not self._session.history:
+        if not self._session or not self._session.baseline or (not self._session.history and not self._auto) or self._history_only:
             return
-        base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+        base = os.environ.get("NOVA_DATA_DIR") or QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
         try:
             self._session_path = save_session(
                 Path(base) / "tuning_sessions", self._session.baseline,
-                self._session.config, self._session.history, self._session_path)
+                self._session.config, self._session.history, self._session_path,
+                metadata={"state":self._auto.state,"message":self._auto.message,
+                          "original":asdict(self._auto.original) if self._auto.original else None,
+                          "verified_trial":self._auto.verified.index if self._auto.verified else None,
+                          "events":self._auto.events} if self._auto else None)
         except OSError as exc:
             self._toast(f"保存失败: {exc}", False)
 
@@ -616,12 +789,17 @@ class AiTuningPage(QWidget):
         if hasattr(self, "_config_panel"):
             self._config_panel.setEnabled(not active and not capturing)
         valid_history = bool(self._session and self._session.best_result())
+        self._history_btn.setEnabled(not active and not capturing)
+        self._export_btn.setEnabled(bool(self._session and self._session.history) and not active and not capturing)
+        self._explain_btn.setEnabled(bool(self._session and self._session.history) and not active and not capturing)
+        self._cloud_btn.setEnabled(bool(self._session and self._session.history) and not active and not capturing)
         self._baseline_btn.setEnabled(self._connected and not capturing and not active)
         self._finish_btn.setEnabled(capturing and not active)
-        self._suggest_btn.setEnabled(not capturing and valid_history and not active)
+        self._suggest_btn.setEnabled(not capturing and valid_history and self._auto is None and not self._history_only)
         self._apply_btn.setEnabled(
-            self._connected and not capturing and self._proposed is not None and not active)
+            self._connected and not capturing and self._proposed is not None and self._auto is None and not self._history_only)
         self._abort_btn.setEnabled(active or (self._session is not None and self._auto is None and not self._history_only))
+        self._abort_btn.setText("停止试验 / STOP" if self._auto else self._tr.tr("ai_abort"))
 
     def _set_status(self, text: str, color: str) -> None:
         self._status_color = color
@@ -694,6 +872,9 @@ class AiTuningPage(QWidget):
 
     def retranslate(self) -> None:
         t = self._tr.tr
+        self._save_profile_btn.setText("保存方案" if self._tr.lang=="zh" else "Save")
+        self._load_profile_btn.setText("加载方案" if self._tr.lang=="zh" else "Load")
+        self._demo_profile_btn.setText("模拟预设" if self._tr.lang=="zh" else "Demo")
         self._title.setText(t("ai_title"))
         self._baseline_group.setTitle(t("ai_baseline_group"))
         self._search_group.setTitle(t("ai_search_group"))
@@ -714,12 +895,15 @@ class AiTuningPage(QWidget):
         self._suggest_btn.setText(t("ai_suggest"))
         self._apply_btn.setText(t("ai_apply"))
         self._abort_btn.setText(t("ai_abort"))
-        self._hint.setText(t("ai_initial_hint"))
+        if self._auto and self._auto.active:
+            self._hint.setText(self._auto.message)
+        elif not self._session:
+            self._hint.setText(t("ai_initial_hint"))
         self._table.setHorizontalHeaderLabels([
             t("ai_col_trial"), t("ai_col_pid"), t("ai_col_score"),
             t("ai_col_rise"), t("ai_col_settling"), t("ai_col_overshoot"),
             t("ai_col_error"), t("ai_col_safety"),
         ])
-        if not self._session or not self._session.capturing:
+        if not self._session:
             self._set_status(t("ai_idle"), "#86909C")
         self._refresh_buttons()
