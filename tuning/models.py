@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Any
+import math
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,9 @@ class SafetyLimits:
     output_abs_max: float = 1_000_000.0
     max_overshoot_percent: float = 30.0
     max_relative_gain_change: float = 0.20
+    max_absolute_gain_change: PIDGains = field(default_factory=lambda: PIDGains(0.02, 0.02, 0.002))
+    telemetry_timeout: float = 1.0
+    saturation_seconds: float = 1.0
 
 
 @dataclass
@@ -66,6 +70,47 @@ class TuningConfig:
     weight_settling: float = 0.20
     weight_steady_error: float = 0.10
     weight_output_variation: float = 0.05
+    settling_hold_seconds: float = 0.5
+    channel: int = 1
+    mode: str = "PID"
+    locked: tuple[bool, bool, bool] = (False, False, False)
+    gain_resolution: PIDGains = field(default_factory=lambda: PIDGains(1e-6, 1e-6, 1e-6))
+    initial_target: float = 0.0
+    step_target: float = 1.0
+    stable_tolerance: float = 0.02
+    stable_seconds: float = 0.5
+    stability_timeout: float = 30.0
+    pre_seconds: float = 1.0
+    patience: int = 5
+    target_score: float = 0.0
+    device_name: str = "Generic"
+    unit: str = "unit"
+    algorithm: str = "positional_pid_d_on_measurement"
+
+    def validate(self) -> None:
+        for gains in (self.gain_min, self.gain_max, self.gain_resolution, self.safety.max_absolute_gain_change):
+            if not all(math.isfinite(v) and v >= 0 for v in gains.as_array()):
+                raise ValueError("PID 范围、分辨率和变化限制必须为有限非负数")
+        if any(lo > hi or step < 1e-6 for lo, hi, step in zip(self.gain_min.as_array(), self.gain_max.as_array(), self.gain_resolution.as_array())):
+            raise ValueError("参数范围或分辨率无效（协议最小分辨率为 0.000001）")
+        numeric = (self.capture_seconds, self.sample_period_seconds, self.settling_hold_seconds,
+                   self.stable_seconds, self.stability_timeout, self.pre_seconds,
+                   self.safety.telemetry_timeout, self.safety.saturation_seconds, self.stable_tolerance)
+        if not all(math.isfinite(v) and v > 0 for v in numeric):
+            raise ValueError("时间和容差必须为正数")
+        if not 1 <= self.max_trials <= 100 or self.minimum_samples < 3 or self.channel < 0:
+            raise ValueError("试验数、采样数或通道无效")
+        if self.mode not in ("P", "PI", "PID") or len(self.locked) != 3:
+            raise ValueError("控制模式无效")
+        limits = self.safety
+        if not all(math.isfinite(v) for v in (limits.actual_min, limits.actual_max, limits.output_abs_max,
+                limits.max_relative_gain_change, limits.max_overshoot_percent, self.initial_target, self.step_target)):
+            raise ValueError("安全限制必须为有限数")
+        if limits.actual_min >= limits.actual_max or limits.output_abs_max <= 0 or not 0 < limits.max_relative_gain_change <= 1:
+            raise ValueError("安全范围无效")
+
+    def active_axes(self) -> tuple[bool, bool, bool]:
+        return tuple(not self.locked[i] and i < {"P": 1, "PI": 2, "PID": 3}[self.mode] for i in range(3))
 
 
 @dataclass

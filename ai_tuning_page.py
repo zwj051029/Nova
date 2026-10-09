@@ -18,6 +18,7 @@ from serial_worker import SerialWorker
 from tuning.models import PIDGains, SafetyLimits, TuningConfig
 from tuning.session import TuningSession
 from tuning.storage import save_session
+from tuning.protocol import telemetry
 from theme import colors
 
 
@@ -215,6 +216,8 @@ class AiTuningPage(QWidget):
         self._plot.showGrid(x=True, y=True, alpha=0.2)
         self._sp_curve = self._plot.plot(pen=pg.mkPen("#2ECC71", width=2), name="Setpoint")
         self._pv_curve = self._plot.plot(pen=pg.mkPen("#E74C3C", width=2), name="Actual")
+        self._baseline_curve = self._plot.plot(pen=pg.mkPen("#86909C", width=1, style=Qt.PenStyle.DashLine), name="Baseline")
+        self._best_curve = self._plot.plot(pen=pg.mkPen("#9B71F5", width=2), name="Best")
         self._legend = self._plot.addLegend()
         layout.addWidget(self._plot, 2)
 
@@ -222,6 +225,8 @@ class AiTuningPage(QWidget):
         self._table.verticalHeader().setVisible(False)
         self._table.setAlternatingRowColors(True)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.itemSelectionChanged.connect(self._preview_trial)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self._table, 1)
         return panel
@@ -292,6 +297,11 @@ class AiTuningPage(QWidget):
         if not self._require_connection():
             return
         config = self._config()
+        try:
+            config.validate()
+        except ValueError as exc:
+            self._toast(str(exc), False)
+            return
         if config.safety.actual_min >= config.safety.actual_max:
             self._toast(self._tr.tr("ai_invalid_actual_range"), False)
             return
@@ -388,10 +398,10 @@ class AiTuningPage(QWidget):
             return False
 
     def ingest_line(self, line: str) -> None:
-        parsed = _parse_pid_frame(line)
-        if parsed is None or not self._session or not self._session.capturing:
+        frame = telemetry(line)
+        if frame is None or not self._session or not self._session.capturing or frame.channel != self._session.config.channel:
             return
-        safe, reason = self._session.ingest(*parsed)
+        safe, reason = self._session.ingest(frame.setpoint, frame.actual, frame.output, frame.timestamp, frame.sequence)
         if not safe:
             result = self._session.record_failure(reason)
             self._append_result(result)
@@ -412,6 +422,15 @@ class AiTuningPage(QWidget):
             self._sp_curve.setData([s.timestamp for s in visible], [s.setpoint for s in visible])
             self._pv_curve.setData([s.timestamp for s in visible], [s.actual for s in visible])
 
+    def _preview_trial(self) -> None:
+        if not self._session or self._session.capturing:
+            return
+        row = self._table.currentRow()
+        if 0 <= row < len(self._session.history):
+            samples = self._session.history[row].samples
+            self._sp_curve.setData([s.timestamp for s in samples], [s.setpoint for s in samples])
+            self._pv_curve.setData([s.timestamp for s in samples], [s.actual for s in samples])
+
     def _begin_capture_ui(self) -> None:
         self._capture_t0 = time.monotonic()
         self._sp_curve.setData([], [])
@@ -424,6 +443,12 @@ class AiTuningPage(QWidget):
         if not self._session or not self._session.capturing:
             return
         elapsed = time.monotonic() - self._capture_t0
+        if time.monotonic() - self._session.last_received_at > self._session.config.safety.telemetry_timeout:
+            self._append_result(self._session.record_failure("遥测超时"))
+            self._save_session()
+            self._abort()
+            self._toast("遥测超时：已请求恢复基准，设备是否生效未经确认", False)
+            return
         remaining = max(0.0, self._session.config.capture_seconds - elapsed)
         self._status.setText(self._tr.tr("ai_capturing_time").format(seconds=remaining))
         if elapsed >= self._session.config.capture_seconds:
@@ -451,6 +476,10 @@ class AiTuningPage(QWidget):
         if best:
             self._best_value.setText(
                 f"{best.gains.formatted()}  |  {best.metrics.score:.2f}")
+            self._best_curve.setData([s.timestamp for s in best.samples], [s.actual for s in best.samples])
+        baseline = next((r for r in self._session.history if r.is_baseline), None)
+        if baseline:
+            self._baseline_curve.setData([s.timestamp for s in baseline.samples], [s.actual for s in baseline.samples])
 
     def _save_session(self) -> None:
         if not self._session or not self._session.baseline or not self._session.history:

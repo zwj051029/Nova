@@ -49,7 +49,11 @@ class SerialWorker(QObject):
     def open(self, port: str, baudrate: int,
              bytesize=8, parity="N", stopbits=1, **options) -> None:
         self.close()
-        self._port = serial.serial_for_url(
+        if port == "sim://":
+            from tuning.device import SimulatedPort
+            self._port = SimulatedPort()
+        else:
+            self._port = serial.serial_for_url(
             port, baudrate=baudrate, timeout=0.05, write_timeout=0.25,
             bytesize=bytesize, parity=parity, stopbits=stopbits, **options,
         )

@@ -1,6 +1,7 @@
 import serial
 import serial.tools.list_ports
 import threading
+import codecs
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QLabel, QComboBox, QPushButton, QGroupBox,
@@ -187,6 +188,7 @@ class SerialPage(QWidget):
         self.on_data_sent = None
         self.on_toast = None
         self._is_recv_hex = False  # False=字符串, True=十六进制
+        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
 
         self._scanner = _PortScanner()
         self._scanner.finished.connect(self._on_scan_finished)
@@ -455,16 +457,7 @@ class SerialPage(QWidget):
                 hex_str = " ".join(f"{b:02X}" for b in chunk)
                 self._append_to(self._recv_box, hex_str, "#7B5EA7")
         else:
-            try:
-                text = data.decode("utf-8").rstrip("\r\n")
-                for line in text.splitlines():
-                    if line:
-                        self._append_to(self._recv_box, line, "#2E7D32")
-            except UnicodeDecodeError:
-                for i in range(0, len(data), 16):
-                    chunk = data[i:i + 16]
-                    hex_str = " ".join(f"{b:02X}" for b in chunk)
-                    self._append_to(self._recv_box, hex_str, "#7B5EA7")
+            self._append_to(self._recv_box, self._decoder.decode(data), "#2E7D32", newline=False)
 
     def current_port(self) -> str:
         return self._port_combo.currentText()
@@ -481,7 +474,7 @@ class SerialPage(QWidget):
 
     def refresh_ports(self) -> None:
         """Synchronous refresh used on startup (before UI is shown)."""
-        ports = [p.device for p in serial.tools.list_ports.comports()]
+        ports = ["sim://"] + [p.device for p in serial.tools.list_ports.comports()]
         self._apply_ports(ports)
 
     def _trigger_refresh(self) -> None:
@@ -497,6 +490,7 @@ class SerialPage(QWidget):
         self._scanner.scan()
 
     def _on_scan_finished(self, ports: list, error: str) -> None:
+        ports = ["sim://"] + ports
         self._refresh_btn.stop_spin()
         self._refresh_btn.setToolTip(self._tr.tr("refresh_tooltip"))
 
@@ -688,13 +682,17 @@ class SerialPage(QWidget):
 
     def _toggle_recv_mode(self) -> None:
         self._is_recv_hex = not self._is_recv_hex
+        self._decoder.reset()
         self._update_recv_mode_btn()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _append_to(self, box: QPlainTextEdit, text: str, color: str) -> None:
+    def _append_to(self, box: QPlainTextEdit, text: str, color: str, newline=True) -> None:
+        scrollbar = box.verticalScrollBar()
+        follow = scrollbar.value() >= scrollbar.maximum() - 2
+        position = scrollbar.value()
         if self._theme == "dark":
             color = {
                 "#2E7D32": "#65D38E", "#7B5EA7": "#C3A6FF",
@@ -704,9 +702,11 @@ class SerialPage(QWidget):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(color))
-        cursor.insertText(text + "\n", fmt)
-        box.setTextCursor(cursor)
-        box.ensureCursorVisible()
+        cursor.insertText(text + ("\n" if newline else ""), fmt)
+        if follow:
+            scrollbar.setValue(scrollbar.maximum())
+        else:
+            scrollbar.setValue(position)
 
     def _clear_send_box(self) -> None:
         self._send_box.clear()

@@ -22,6 +22,9 @@ class TuningSession:
         self._step_target: float | None = None
         self._step_initial_actual: float | None = None
         self.optimizer = BayesianPIDOptimizer(config)
+        self._last_sequence = None
+        self._device_t0 = None
+        self.last_received_at = 0.0
 
     def set_baseline(self, gains: PIDGains) -> None:
         self.baseline = gains
@@ -37,13 +40,30 @@ class TuningSession:
         self._step_initial_actual = None
         self.capture_started_at = time.monotonic()
         self.capturing = True
+        self.last_received_at = self.capture_started_at
+        self._last_sequence = None
+        self._device_t0 = None
 
-    def ingest(self, setpoint: float, actual: float, output: float) -> tuple[bool, str]:
+    def ingest(self, setpoint: float, actual: float, output: float,
+               timestamp: float | None = None, sequence: int | None = None) -> tuple[bool, str]:
         if not self.capturing:
             return True, ""
         previous = self.samples[-1] if self.samples else None
-        timestamp = (previous.timestamp + self.config.sample_period_seconds
-                     if previous else 0.0)
+        if sequence is not None:
+            if self._last_sequence is not None and sequence != self._last_sequence + 1:
+                self.capturing = False
+                return False, "遥测丢帧或序号异常"
+            self._last_sequence = sequence
+        if timestamp is None:
+            timestamp = previous.timestamp + self.config.sample_period_seconds if previous else 0.0
+        else:
+            if self._device_t0 is None:
+                self._device_t0 = timestamp
+            timestamp -= self._device_t0
+            if previous and timestamp <= previous.timestamp:
+                self.capturing = False
+                return False, "设备时间戳未递增"
+        self.last_received_at = time.monotonic()
         sample = TelemetrySample(timestamp, setpoint, actual, output)
         self.samples.append(sample)
         safe, reason = check_live_sample(sample, self.config.safety)
@@ -95,8 +115,9 @@ class TuningSession:
     def suggest(self) -> tuple[PIDGains, str]:
         if not self.baseline:
             raise RuntimeError("请先设置并测试基准 PID")
-        gains, reason = self.optimizer.suggest(self.history, self.baseline)
-        ok, safety_reason = validate_candidate(gains, self.baseline, self.config)
+        reference = self.current_gains or self.baseline
+        gains, reason = self.optimizer.suggest(self.history, reference)
+        ok, safety_reason = validate_candidate(gains, reference, self.config)
         if not ok:
             raise RuntimeError(safety_reason)
         self.proposed = gains

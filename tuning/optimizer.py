@@ -22,12 +22,14 @@ class BayesianPIDOptimizer:
 
         best = min(safe_results, key=lambda r: r.metrics.score)
         seed = self._seed_candidate(len(safe_results), best.gains, reference)
-        if seed is not None:
+        if seed is not None and all(seed != result.gains for result in history):
             return seed, "安全初始化探索"
 
         lower = np.asarray(self.config.gain_min.as_array(), dtype=float)
         upper = np.asarray(self.config.gain_max.as_array(), dtype=float)
-        span = np.maximum(upper - lower, 1e-12)
+        span = np.maximum(np.maximum(np.abs(reference.as_array()) * self.config.safety.max_relative_gain_change,
+                                    self.config.safety.max_absolute_gain_change.as_array()) * 2,
+                          self.config.gain_resolution.as_array())
         x = np.asarray([r.gains.as_array() for r in safe_results], dtype=float)
         x = (x - lower) / span
         y = np.asarray([r.metrics.score for r in safe_results], dtype=float)
@@ -37,7 +39,8 @@ class BayesianPIDOptimizer:
 
         candidates = self._candidate_pool(best.gains, lower, upper, reference)
         seen = {tuple(round(v, 6) for v in r.gains.as_array()) for r in history}
-        candidates = np.unique(np.round(candidates, 6), axis=0)
+        resolution = np.asarray(self.config.gain_resolution.as_array())
+        candidates = np.unique(np.round(np.round(candidates / resolution) * resolution, 6), axis=0)
         candidates = np.asarray([row for row in candidates if tuple(row) not in seen
                                  and validate_candidate(PIDGains(*row), reference, self.config)[0]])
         if not len(candidates):
@@ -60,13 +63,19 @@ class BayesianPIDOptimizer:
     ) -> PIDGains | None:
         if count >= 4:
             return None
-        axis = (count - 1) % 3
+        axes = [i for i, active in enumerate(self.config.active_axes()) if active]
+        if not axes:
+            return None
+        axis = axes[(count - 1) % len(axes)]
         values = list(best.as_array())
         upper = self.config.gain_max.as_array()
         step = max(abs(values[axis]) * 0.10, upper[axis] * 0.005, 1e-6)
-        safety_scale = max(abs(reference.as_array()[axis]), upper[axis] * 0.01, 1e-9)
-        step = min(step, safety_scale * self.config.safety.max_relative_gain_change * 0.5)
+        allowed = max(abs(reference.as_array()[axis]) * self.config.safety.max_relative_gain_change,
+                      self.config.safety.max_absolute_gain_change.as_array()[axis])
+        step = min(step, allowed * 0.5)
         values[axis] = min(upper[axis], values[axis] + step)
+        resolution = self.config.gain_resolution.as_array()
+        values = [round(round(v / r) * r, 6) for v, r in zip(values, resolution)]
         candidate = PIDGains(*values)
         ok, _ = validate_candidate(candidate, reference, self.config)
         return candidate if ok and candidate != best else None
@@ -78,9 +87,13 @@ class BayesianPIDOptimizer:
         span = upper - lower
         center = np.asarray(best.as_array(), dtype=float)
         base = np.asarray(reference.as_array())
-        radius = np.maximum(np.abs(base), upper * 0.01) * self.config.safety.max_relative_gain_change
+        radius = np.maximum(np.abs(base) * self.config.safety.max_relative_gain_change,
+                            self.config.safety.max_absolute_gain_change.as_array())
         low = np.maximum(lower, base - radius)
         high = np.minimum(upper, base + radius)
+        for i, active in enumerate(self.config.active_axes()):
+            if not active:
+                low[i] = high[i] = base[i]
         raw = self._rng.uniform(low, high, size=(1200, 3))
         valid = []
         for row in raw:

@@ -17,6 +17,8 @@ def analyze_step_response(
     sp = np.asarray([s.setpoint for s in samples], dtype=float)
     pv = np.asarray([s.actual for s in samples], dtype=float)
     out = np.asarray([s.output for s in samples], dtype=float)
+    if not all(np.all(np.isfinite(a)) for a in (t, sp, pv, out)):
+        return ResponseMetrics(False, "采样包含非有限数", sample_count=len(samples))
     t = t - t[0]
 
     dt = np.diff(t)
@@ -46,15 +48,16 @@ def analyze_step_response(
 
     normalized_progress = direction * (post_pv - initial) / amplitude
     rise_hits = np.flatnonzero(normalized_progress >= 0.90)
-    rise_time = float(post_t[rise_hits[0]]) if rise_hits.size else float("nan")
+    start_hits = np.flatnonzero(normalized_progress >= 0.10)
+    rise_time = float(post_t[rise_hits[0]] - post_t[start_hits[0]]) if rise_hits.size and start_hits.size else float("nan")
 
     tolerance = amplitude * config.settling_tolerance_percent / 100.0
     within = np.abs(post_pv - target) <= tolerance
     settling_time = float("nan")
-    for i in range(len(within)):
-        if within[i] and bool(np.all(within[i:])):
-            settling_time = float(post_t[i])
-            break
+    outside = np.flatnonzero(~within)
+    stable_start = int(outside[-1] + 1) if outside.size else 0
+    if stable_start < len(post_t) and post_t[-1] - post_t[stable_start] >= config.settling_hold_seconds:
+        settling_time = float(post_t[stable_start])
 
     if direction > 0:
         overshoot = max(0.0, float(np.max(post_pv) - target))
@@ -63,7 +66,7 @@ def analyze_step_response(
     overshoot_percent = overshoot / amplitude * 100.0
 
     tail_count = max(3, len(post_pv) // 10)
-    steady_error = abs(float(np.mean(error[-tail_count:])))
+    steady_error = float(np.mean(np.abs(error[-tail_count:])))
     iae = float(np.trapezoid(np.abs(error), post_t))
     itae = float(np.trapezoid(post_t * np.abs(error), post_t))
     control_effort = float(np.trapezoid(post_out * post_out, post_t))
@@ -75,7 +78,7 @@ def analyze_step_response(
                            if math.isfinite(settling_time) else 2.0)
     normalized_steady = steady_error / amplitude
     normalized_variation = output_variation / max(
-        float(np.max(np.abs(post_out))) * max(len(post_out) - 1, 1), 1e-9)
+        float(np.max(np.abs(post_out))) * duration, 1e-9)
     score = 100.0 * (
         config.weight_iae * normalized_iae
         + config.weight_overshoot * (overshoot_percent / 100.0)

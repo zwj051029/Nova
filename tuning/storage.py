@@ -1,11 +1,65 @@
 from __future__ import annotations
 
 import json
+import math
+import os
+import uuid
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
-from .models import PIDGains, TrialResult, TuningConfig
+from .models import PIDGains, TrialResult, TuningConfig, SafetyLimits, ResponseMetrics, TelemetrySample
+
+
+def _clean(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: _clean(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clean(item) for item in value]
+    return value
+
+
+def atomic_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as stream:
+            json.dump(_clean(payload), stream, ensure_ascii=False, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def config_from_dict(data: dict) -> TuningConfig:
+    values = dict(data)
+    for key in ("gain_min", "gain_max", "gain_resolution"):
+        if key in values:
+            values[key] = PIDGains(**values[key])
+    safety = dict(values.pop("safety", {}))
+    if "max_absolute_gain_change" in safety:
+        safety["max_absolute_gain_change"] = PIDGains(**safety["max_absolute_gain_change"])
+    values["safety"] = SafetyLimits(**safety)
+    config = TuningConfig(**values)
+    config.validate()
+    return config
+
+
+def load_session(path: Path):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schema_version", 1) not in (1, 2):
+        raise ValueError("不支持的会话版本")
+    config = config_from_dict(data["config"])
+    history = []
+    for trial in data["trials"]:
+        metrics = {key: value for key, value in trial["metrics"].items() if value is not None}
+        history.append(TrialResult(trial["index"], PIDGains(**trial["gains"]),
+                     ResponseMetrics(**metrics), trial["safe"], trial.get("is_baseline", False),
+                     [TelemetrySample(**sample) for sample in trial.get("samples", [])]))
+    return PIDGains(**data["baseline"]), config, history
 
 
 def save_session(
@@ -14,12 +68,17 @@ def save_session(
 ) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     if path is None:
-        path = directory / f"pid_tuning_{datetime.now():%Y%m%d_%H%M%S}.json"
+        path = directory / f"pid_tuning_{datetime.now():%Y%m%d_%H%M%S_%f}.json"
+    created = datetime.now().isoformat(timespec="seconds")
+    if path.exists():
+        created = json.loads(path.read_text(encoding="utf-8")).get("created_at", created)
     payload = {
-        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "schema_version": 2,
+        "created_at": created,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
         "baseline": asdict(baseline),
         "config": asdict(config),
         "trials": [result.to_dict(include_samples=True) for result in history],
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_json(path, payload)
     return path

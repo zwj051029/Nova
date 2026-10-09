@@ -14,6 +14,7 @@ from PySide6.QtGui import QFont
 from i18n import Translator
 from serial_worker import SerialWorker
 from theme import colors
+from tuning.protocol import telemetry
 
 BUFFER_SIZE = 500
 
@@ -85,6 +86,9 @@ def _system_font() -> str:
 
 
 def parse_line(line: str) -> tuple[int, float, float, float] | None:
+    frame = telemetry(line)
+    if frame:
+        return frame.channel, frame.setpoint, frame.actual, frame.output
     if not line.startswith(">"):
         return None
     try:
