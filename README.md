@@ -1,473 +1,288 @@
-<div align="center">
+# Nova
 
-# ⚡ Nova
+面向嵌入式控制系统的串口调试与 PID 调参桌面工具，基于 PySide6、pyqtgraph、pyserial 和 NumPy 构建。
 
-### 🎛️ 下一代串口调试 · PID 可视化 · AI 辅助调参上位机
+Nova 提供串口收发、实时波形、手动 PID 调参和本地贝叶斯优化。支持 Nova v2 协议的设备还可以执行带确认、保护和最终复测的自动调参流程。
 
-**让串口通信更直观，让 PID 调参更聪明。**
+本地调参不依赖网络或 API Key。可选云端解释仅提供文字分析，不参与参数搜索或设备控制。
 
-<p>
-  <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/PySide6-Qt%20Desktop-41CD52?style=for-the-badge&logo=qt&logoColor=white" alt="PySide6">
-  <img src="https://img.shields.io/badge/AI-Bayesian%20Optimization-7B61FF?style=for-the-badge&logo=sparkles&logoColor=white" alt="AI Tuning">
-  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-165DFF?style=for-the-badge" alt="Platform">
-</p>
+## 目录
 
-<p>
-  <a href="#-界面预览">界面预览</a> •
-  <a href="#-核心能力">核心能力</a> •
-  <a href="#-快速开始">快速开始</a> •
-  <a href="#-通信协议">通信协议</a> •
-  <a href="#-ai-辅助-pid-调参">AI 调参</a>
-</p>
+- [功能](#功能)
+- [快速开始](#快速开始)
+- [使用说明](#使用说明)
+- [通信协议](#通信协议)
+- [安全与限制](#安全与限制)
+- [数据与隐私](#数据与隐私)
+- [开发与测试](#开发与测试)
+- [项目结构](#项目结构)
+- [界面预览](#界面预览)
+- [贡献](#贡献)
 
-</div>
+## 功能
 
----
+| 模块 | 已实现能力 |
+| --- | --- |
+| 串口通信 | 端口扫描、串口参数及流控配置、文本与 HEX 收发、可选行结束符、循环发送、RX/TX 统计 |
+| 手动调参 | Kp、Ki、Kd 独立设置 2–6 位小数，输入框与滑块联动，单参数或整组发送 |
+| 波形分析 | 目标值、实际值与输出曲线，通道筛选、时间轴、暂停显示、双游标、CSV 导出 |
+| 本地优化 | 高斯过程贝叶斯优化，阶跃响应评分，独立参数范围、分辨率、步长约束及参数锁定 |
+| 自动试验 | 设备能力检查、命令确认、初始稳定判定、自动阶跃、逐轮确认或受限自动运行、最优复测 |
+| 档案与记录 | P/PI/PID 设备档案、JSON 参数方案、会话自动保存、只读历史回放、HTML/CSV/JSON 导出 |
+| 分析助手 | 离线规则解释、可选只读云端解释 |
+| 界面 | 深色与浅色主题、中英文切换、设置记忆 |
 
-## 🌌 项目简介
+## 快速开始
 
-**Nova** 是一款基于 **PySide6、pyqtgraph、pyserial 与 NumPy** 构建的跨平台串口 PID 调试上位机。
+### 环境要求
 
-它将常用串口工具、实时 PID 波形、六位小数精度调参和本地 AI 优化整合在同一个现代化桌面界面中。无论是电机、温控、位置环还是其他闭环控制系统，都可以通过一条简单的数据帧快速接入。
+- Python 3.11 或更高版本。
+- 可运行 Qt 桌面应用的环境。当前回归验证在 Windows 上完成；Linux 和 macOS 尚未完成实机验证。
+- 真实设备需要可用串口及相应驱动；使用内置模拟器不需要硬件。
 
-> 🔒 PID 优化与自动试验完全在本地运行。可选“云端解释”仅在用户确认后上传指标摘要，不控制设备；无需云端服务也能完成调参。
-
----
-
-## 🖼️ 界面预览
-
-### 🔌 01 · 串口收发
-
-端口扫描、串口参数配置、字符串/十六进制收发、循环发送和实时 RX/TX 统计一站完成。
-
-<div align="center">
-  <img src="images/串口收发.png" alt="Nova 串口收发界面" width="100%">
-</div>
-
-### 📈 02 · 手动 PID 调参
-
-Kp、Ki、Kd 数值框与滑块双向联动，小数精度可在 **2～6 位**之间独立调节，并实时绘制目标值与实际值曲线。
-
-<div align="center">
-  <img src="images/PID调参.png" alt="Nova PID 调参界面" width="100%">
-</div>
-
-### ✨ 03 · AI 辅助调参
-
-以稳定 PID 为起点，自动分析阶跃响应、计算性能评分，并在安全边界内生成下一组 PID 推荐值。
-
-<div align="center">
-  <img src="images/AI调参.png" alt="Nova AI 调参界面" width="100%">
-</div>
-
----
-
-## 🚀 核心能力
-
-| 模块 | 能力 | 说明 |
-|:---:|---|---|
-| 🔌 | **串口管理** | 自动扫描端口，支持常用波特率、数据位、校验位与停止位配置 |
-| 💬 | **双模式收发** | 字符串 / 十六进制发送与接收，支持循环定时发送 |
-| 🧵 | **后台读取** | 独立线程读取串口，批量刷新 UI，降低高速数据导致的界面卡顿 |
-| 📊 | **实时波形** | 目标值 / 实际值双曲线，500 点环形缓冲，支持缩放、拖拽和自动范围 |
-| 🎚️ | **高精度 PID** | Kp / Ki / Kd 支持 2～6 位小数，滑块、输入框和发送精度实时同步 |
-| 📤 | **灵活下发** | 支持单独发送 Kp、Ki、Kd，也支持一键发送全部参数 |
-| 🧠 | **本地 AI 优化** | 轻量高斯过程贝叶斯优化，根据历史试验逐轮推荐更优参数 |
-| 🛡️ | **安全约束** | 参数范围、单次变化比例、实际值、输出值和超调量多重保护 |
-| ↩️ | **确认与停止** | 自动模式逐条确认设备执行；异常请求停止，最终复测后由用户接受或恢复原参数 |
-| 🌐 | **中英双语** | 中文 / English 一键切换并自动记忆语言设置 |
-| 💾 | **会话记录** | 自动保存 AI 调参配置、每轮指标、PID 参数和采样数据 |
-
----
-
-## 🧭 数据流
-
-```mermaid
-flowchart LR
-    MCU["🔧 下位机 / 控制器"]
-    SERIAL["🔌 串口后台线程"]
-    RX["💬 串口收发页"]
-    PID["📈 PID 实时波形"]
-    AI["🧠 AI 评分与推荐"]
-    SAFE["🛡️ 安全监督器"]
-
-    MCU -->|目标值 / 实际值 / 输出值| SERIAL
-    SERIAL --> RX
-    SERIAL --> PID
-    SERIAL --> AI
-    AI --> SAFE
-    SAFE -->|用户确认后下发 PID| MCU
-    SAFE -->|自动模式异常请求 STOP| MCU
-```
-
----
-
-## ⚡ 快速开始
-
-### 1️⃣ 环境要求
-
-- Python **3.11+**
-- Windows / Linux / macOS
-- 一组物理串口或虚拟串口对
-
-### 2️⃣ 克隆项目
+### 安装与启动
 
 ```bash
 git clone https://github.com/zwj051029/Nova.git
 cd Nova
-```
-
-### 3️⃣ 创建虚拟环境
-
-```bash
 python -m venv venv
 ```
 
-<details>
-<summary>👉 点击查看各平台激活命令</summary>
+Windows PowerShell：
 
 ```powershell
-# Windows PowerShell
-.\venv\Scripts\Activate.ps1
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe main.py
 ```
 
-```bat
-:: Windows CMD
-venv\Scripts\activate.bat
-```
+Linux / macOS：
 
 ```bash
-# Linux / macOS
-source venv/bin/activate
+./venv/bin/python -m pip install -r requirements.txt
+./venv/bin/python main.py
 ```
 
-</details>
+以上命令直接调用虚拟环境中的 Python，无需先激活环境。虚拟环境不可跨机器复制；如果已有 `venv` 引用了不存在的 Python 路径，请重新创建环境。
 
-### 4️⃣ 安装依赖
+### 无硬件体验
 
-```bash
-pip install -r requirements.txt
-```
+1. 在“串口收发”页选择 `sim://`，点击打开串口。
+2. 进入“AI 调参”页，点击“模拟预设 / Demo”。预设采样周期为 20 ms，基准 PID 为 `1, 0.5, 0`。
+3. 选择“每轮确认”或“受限自动”，点击“自动试验 / Start”，阅读并确认提示。
+4. 查看各轮评分与曲线，等待最优参数复测完成。
+5. 选择接受最优参数或恢复原参数。两种操作都会保持模拟设备输出停止。
 
-### 5️⃣ 启动 Nova
+`sim://` 是应用内置的模拟串口名称，不是网页地址，也不需要安装虚拟串口驱动。模拟器执行 PID 闭环计算，包含一阶惯性、输出饱和和积分抗饱和；仿真结果不代表真实设备性能。
 
-```bash
-python main.py
-```
+## 使用说明
 
-如果直接使用仓库内已有的 Windows 虚拟环境，也可以运行：
+### 串口与手动 PID
 
-```powershell
-.\venv\Scripts\python.exe .\main.py
-```
+连接设备后，先在串口页确认数据正常，再进入“PID 调参”页选择对应通道。
 
----
+- Kp、Ki、Kd 的小数位数通过各自的 `+` / `−` 按钮调整，范围为 2–6 位，互不影响。
+- 手动编辑小数时，位数显示随输入更新。减少精度会对当前值舍入；发送使用各参数当前的显示精度。
+- 波形保留最近 500 个采样点。暂停只冻结显示，不停止串口接收；CSV 导出当前显示的数据。
+- AI 试验占用设备控制权期间，其他页面不能发送指令或修改串口控制信号。
 
-## 🔗 通信协议
+### 本地优化如何工作
 
-Nova 默认使用 **UTF-8 文本协议 + `\r\n` 行结束符**，便于 MCU 使用 `printf` 快速对接。
+实际生成 PID 候选的是本地高斯过程贝叶斯优化器，而不是大语言模型。优化器使用历史试验的参数与评分建立模型，并在配置的范围、变化限制及锁定条件内推荐下一组参数。
 
-### 📥 下位机 → 上位机：实时数据帧
+评分依据包括 IAE、超调、调节时间、稳态误差及输出变化；同时报告上升时间、ITAE 等指标。综合评分越低越好，但不构成闭环稳定性或全局最优保证。无有效阶跃、采样不足或目标持续变化的记录不会作为有效优化样本。
+
+### 人工采集模式
+
+适用于仅实现旧版文本协议的设备。
+
+1. 准备一组已经在实际设备上验证稳定的 PID，填入或从手动调参页读取。
+2. 配置真实采样周期、采集时长、参数范围和安全阈值。
+3. 点击“开始基准采集”，随后在设备端改变一次目标值，并保持目标不变。
+4. 结束采集并评分，生成推荐后审核参数。
+5. 点击“应用推荐并采集”，使用相同条件重复阶跃试验。
+
+旧版协议没有执行确认。异常时软件尝试恢复基准参数，但无法确认设备是否收到或生效，也不能保证设备停止。
+
+### 自动试验模式
+
+需要固件实现 [Nova v2 协议](#nova-v2-协议)。开始前，应在“设备档案与独立范围 / Profile”中填写设备名称、单位、通道、控制模式、真实周期、目标阶跃和保护条件。
+
+流程依次为：能力检查、读取原参数、配置设备保护、停止输出、确认 PID、等待初始稳定、采集阶跃前数据、确认阶跃、采集评分、迭代、最优复测、停止并等待用户决定。
+
+- **每轮确认**：每轮结束停止输出，由用户确认后开始下一轮。
+- **受限自动**：在最大轮数、无改善轮数、目标评分与安全条件限制下自动迭代。
+- **最优复测**：预留一轮验证最佳候选；复测评分不得高于候选评分的 `1.1 倍 + 0.5`。
+- **接受或恢复**：确认参数写入设备 RAM，输出保持停止；不写入 Flash，不自动恢复运动。
+
+自动试验至少需要 3 轮。尚未在采集窗口内确认响应稳定的情况会单独提示；通过重复性复测不等于证明系统稳定。
+
+## 通信协议
+
+### 旧版文本协议
+
+使用 UTF-8 编码，按换行分帧。以下 `\r\n` 表示实际的回车换行字节。
+
+下位机遥测：
 
 ```text
 >ID,Setpoint,Actual,Output\r\n
-```
-
-示例：
-
-```text
 >1,1500.500000,1498.300000,0.650000\r\n
 ```
 
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `ID` | `int` | 控制回路编号 |
-| `Setpoint` | `float` | 目标值 |
-| `Actual` | `float` | 实际值 / 过程值 |
-| `Output` | `float` | 控制器输出 |
+`ID` 为非负整数通道号，其余字段分别为目标值、实际值和控制输出，必须是有限数值。旧版遥测没有设备时间戳，人工采集按配置的采样周期重建时间轴。
 
-嵌入式 C 示例：
-
-```c
-printf(">1,%.6f,%.6f,%.6f\r\n", setpoint, actual, output);
-```
-
-### 📤 上位机 → 下位机：发送全部 PID
-
-```text
-PID:Kp,Ki,Kd\r\n
-```
-
-示例：
+整组和单参数下发：
 
 ```text
 PID:1.250000,0.050000,0.001000\r\n
-```
-
-### 🎯 上位机 → 下位机：发送单个参数
-
-```text
 PID:Kp=1.250000\r\n
 PID:Ki=0.050000\r\n
 PID:Kd=0.001000\r\n
 ```
 
-> 💡 下位机需要同时兼容“全部发送”和“单参数发送”两种格式，才能使用手动调参页的所有按钮。
+固件需要实现整组和单参数两种解析方式，才能使用所有手动发送按钮。手动页各参数发送精度为 2–6 位，以上仅为六位小数示例。
 
----
+### Nova v2 协议
 
-## 🧠 AI 辅助 PID 调参
+格式为 `@` 前缀、单行 JSON 和 `\n`。数值必须有限，PID 传输分辨率为 `0.000001`。命令与 ACK 按 `id` 和 `cmd` 匹配，固件应在实际执行后返回 `ok:true`；上位机确认超时为 1.5 秒。
 
-Nova 的 AI 调参不是让大语言模型“猜参数”，而是使用更适合控制器实验的 **高斯过程贝叶斯优化**：根据已完成试验的 PID 与评分建立概率模型，再选择兼顾性能提升和探索价值的下一组参数。
-
-### 🔄 标准工作流
-
-1. 🔌 打开串口，确认实时数据帧与波形正常。
-2. ✅ 准备一组已经确认稳定的 Kp、Ki、Kd。
-3. ✨ 进入“AI 调参”，点击“读取手动调参页数值”或手动填写基准 PID。
-4. ⏱️ 填写下位机真实采样周期和单次采集时间。
-5. 🛡️ 设置参数最大值、单次最大变化、实际值范围、输出上限和最大超调。
-6. ▶️ 点击“开始基准采集”，随后手动改变一次目标值并保持不变。
-7. 📊 等待自动结束或点击“结束并评分”。
-8. 🧠 点击“生成 AI 推荐”，审核参数与推荐依据。
-9. 🚀 点击“应用推荐并采集”，重复同样的阶跃试验。
-10. 🏆 多轮迭代后，对比“基准 PID”“AI 推荐 PID”和“当前最佳 PID / 评分”。
-
-### 📐 自动计算指标
-
-| 指标 | 用途 |
-|---|---|
-| ⏫ 上升时间 | 衡量系统响应速度 |
-| 🎯 调节时间 | 衡量系统进入并保持在误差带内的速度 |
-| 🌊 超调量 | 衡量目标值越界程度 |
-| 📍 稳态误差 | 衡量最终跟踪精度 |
-| ∫ IAE / ITAE | 衡量全过程误差与时间加权误差 |
-| ⚙️ 输出变化 | 抑制控制输出过度抖动 |
-| 💯 综合评分 | 统一比较不同 PID 的整体表现，分数越低越好 |
-
-### 🛡️ 安全机制
-
-- 候选 PID 必须位于用户设置的绝对范围内。
-- 搜索候选变化受“相对比例或零附近绝对步长”约束，Kp/Ki/Kd 可独立配置。
-- 实际值或输出值越界时立即中止采集。
-- 实时超调超过阈值时停止当前试验。
-- 无阶跃、采样不足、目标值未保持稳定的数据不会进入 AI 学习。
-- 旧协议人工采集模式异常时尝试恢复基准，但无法确认设备生效。
-- Nova v2 自动模式异常时请求停止输出；通信中断时依靠下位机独立看门狗。
-- 支持逐轮人工确认与用户明确启用的受限自动模式。
-
-> [!CAUTION]
-> 上位机安全检查不能替代下位机保护。真实设备必须在固件中实现输出限幅、积分抗饱和、超温/超速保护和通信看门狗。首次试验请使用保守参数与较小阶跃。
-
-### 🤖 自动闭环模式（Nova v2）
-
-自动流程：**能力检查 → 读取原参数 → 配置硬件保护 → 停止 → 参数确认 → 初始稳定 → 阶跃前采集 → 阶跃确认 → 评分 → 下一轮 → 最优复测 → 停止 → 人工接受/恢复**。
-
-- **每轮确认**：每轮结束先停止输出，等待用户确认下一组。
-- **受限自动**：在轮数、无改善轮数和安全条件限制下自动运行，最后一轮用于最优复测。
-- **接受/恢复**：只更新已确认的 RAM 参数，保持输出停止，不会自动恢复运动或写 Flash。
-- 无 ACK、能力缺失、控制周期/算法不匹配、丢帧、异常时间戳、遥测超时、目标被外部改变、越界、持续饱和、频繁振荡都会终止流程。
-- 最优复测允许评分波动上限为原评分的 10% 加 0.5 分；不通过则停止，不自动接受结果。
-
-> 默认设备档案是通用占位值，不能视为真实设备的安全配置。首次接入必须填写正确的范围、采样周期、控制算法和硬件保护，并配备独立急停。软件限幅不能保证闭环稳定。
-
-### 📡 Nova v2 固件接入约定
-
-使用 **`@` + 单行 JSON + `\n`**；数值必须有限，PID 最小传输分辨率 `0.000001`。命令与 ACK 通过唯一 `id` 和 `cmd` 匹配，ACK 应在 1.5 秒内返回，且只在实际生效后返回 `ok:true`。固件须按序处理命令，不得将重试/重复 ID 重复执行。
-
-```json
-{"type":"command","id":"session-1","cmd":"hello","channel":1}
-{"type":"ack","id":"session-1","cmd":"hello","ok":true,"version":2,"capabilities":["ack","set_pid","set_target","stop","watchdog","timestamp","limits"],"algorithm":"positional_pid_d_on_measurement","period":0.02}
-{"type":"telemetry","channel":1,"seq":123,"time":2.46,"sp":1.0,"pv":0.92,"out":1.04}
+```text
+@{"type":"command","id":"session-1","cmd":"hello","channel":1}
+@{"type":"ack","id":"session-1","cmd":"hello","ok":true,"version":2,"capabilities":["ack","set_pid","set_target","stop","watchdog","timestamp","limits"],"algorithm":"positional_pid_d_on_measurement","period":0.02}
+@{"type":"telemetry","channel":1,"seq":123,"time":2.46,"sp":1.0,"pv":0.92,"out":1.04}
 ```
 
-上面的 JSON 每行发送时都需加 `@` 前缀。`time` 是递增的设备采样时间（秒），`seq` 在同一通道逐帧加一；当前严格模式发现丢包即停止，不插值掩盖丢包。
+`time` 是递增的设备采样时间，单位为秒；同一通道的 `seq` 逐帧加一。严格模式遇到丢帧、乱序或时间回退即中止，不插值掩盖数据缺失。固件须按序处理命令，避免重复执行相同 ID 的请求。
 
-| 命令 | 请求额外字段 | ACK 额外字段 / 设备行为 |
-|---|---|---|
-| `hello` | 无 | 如上，返回版本、能力、算法、真实采样周期 |
-| `get` | 无 | `gains:[kp,ki,kd]`, `target`, `enabled` |
-| `configure` | `actual_min`, `actual_max`, `output_limit`, `watchdog`（秒） | 在设备端应用限制；超界/看门狗超时必须独立停止输出 |
-| `set_pid` | `gains:[kp,ki,kd]` | 返回实际生效的 `gains`；测试要求重置积分状态 |
-| `set_target` | `value` | 返回实际生效的 `value`；启用控制，故障锁存时拒绝 |
-| `stop` | 无 | 立即关闭输出并清除积分；ACK 后才能视为已停止 |
-| `heartbeat` | 无 | 上位机约每 200 ms 发送；设备刷新看门狗（ACK 可忽略） |
+| 命令 | 请求字段 | ACK 字段或执行约定 |
+| --- | --- | --- |
+| `hello` | 无 | 返回 `version`、`capabilities`、`algorithm`、`period` |
+| `get` | 无 | 返回 `gains:[kp,ki,kd]`、`target`、`enabled` |
+| `configure` | `actual_min`、`actual_max`、`output_limit`、`watchdog` | 在设备端应用保护；`watchdog` 单位为秒 |
+| `set_pid` | `gains:[kp,ki,kd]` | 返回实际生效的 `gains`；试验要求重置积分状态 |
+| `set_target` | `value` | 返回实际生效的 `value`，启用控制；故障锁存时拒绝 |
+| `stop` | 无 | 关闭输出并清除积分，执行后返回 ACK |
+| `heartbeat` | 无 | 刷新设备看门狗；上位机约每 200 ms 发送，忽略其 ACK |
 
-故障帧：`@{"type":"fault","channel":1,"reason":"overtemperature"}`。当前自动模式对应位置式并联 PID、微分作用于测量值，`Ki` 按秒积分、`Kd` 按秒微分；固件形式不同必须先适配，不能直接照搬参数。
+设备故障帧：
 
-### 🗃️ 档案、回放与分析
+```text
+@{"type":"fault","channel":1,"reason":"overtemperature"}
+```
 
-- **设备档案**：名称、单位、通道、P/PI/PID、目标阶跃、稳定判据、各参数上下限/分辨率/绝对步长与锁定开关。
-- **参数方案**：JSON 保存/加载；加载只修改界面，不发送设备指令。
-- **历史回放**：打开会话 JSON，选择试验行，叠加基准与最优曲线；历史是只读的。
-- **报告导出**：HTML 图文报告、CSV 原始采样、JSON 完整会话。会话采用版本化、原子写入及标准 JSON。
-- **波形分析**：通道筛选、时间轴、输出曲线、暂停显示、双游标与 CSV 导出。暂停只冻结显示，不停止接收。
-- **解释助手**：本地规则解释无需网络；可选云端解释使用 [OpenAI Responses API](https://developers.openai.com/api/docs/guides/text)，需填写自己有权限使用的模型 ID 和 API Key，并逐次确认摘要上传。密钥不写磁盘；请求 `store=false`，但不等同于零数据保留。
+当前自动模式对应位置式并联 PID、微分作用于测量值，`Ki` 按秒积分、`Kd` 按秒微分。固件算法或周期不匹配时拒绝启动；其他 PID 形式需要先适配，不能直接复用同一组参数。
 
----
+解析器与模拟设备参考实现见 [tuning/protocol.py](tuning/protocol.py) 和 [tuning/device.py](tuning/device.py)。
 
-## 🧪 无硬件测试
+## 安全与限制
 
-### ⭐ 推荐：内置闭环模拟串口
+上位机检查不能替代设备端保护。默认档案是通用占位配置，不可直接作为真实设备的安全配置。
 
-1. 启动 Nova，在串口页选择 **`sim://`** 并打开，无需驱动或 com0com。
-2. AI 调参页点击 **“模拟预设 / Demo”**：采样周期 20 ms，基准 PID 为 `1, 0.5, 0`。
-3. 选择“每轮确认”或“受限自动”，点击“自动试验 / Start”，确认安全提示。
-4. 查看逐轮结果、基准/最佳叠加和最终复测，再接受或恢复参数。
+- 固件必须独立实现输出限幅、积分抗饱和、必要的超温/超速保护、通信看门狗及急停。
+- 参数范围、单次变化量、实际值边界、输出上限和超调阈值必须按设备能力配置。首次试验使用保守参数和小阶跃。
+- 自动模式遇到命令拒绝或超时、遥测异常、外部目标变更、越界、持续饱和或频繁振荡时请求停止。
+- 停止只有收到对应 ACK 后才视为确认完成。通信中断或停止未确认时，依赖固件看门狗停止输出。
+- 仿真与软件回归测试不覆盖真实设备的全部延迟、噪声、执行机构限制和故障情形，接入后仍需实机验收。
 
-模拟器实际执行 PID，包含一阶惯性、输出饱和和积分抗饱和；测试可注入噪声、执行延迟及丢包。它用于软件验证，不代表真实电机/温控设备已经验证。
+## 数据与隐私
 
-独立运行真实 Qt 事件循环与模拟串口集成测试（约一分钟，截图与报告存放在忽略提交的 `.test-artifacts/`）：
+- 调参会话默认保存在 Qt 的应用数据目录下的 `tuning_sessions/`，也可通过 `NOVA_DATA_DIR` 指定保存根目录。
+- 会话包含配置、PID、指标、原始采样和自动试验状态记录，使用版本化 JSON 与原子写入。
+- 参数方案加载只更新界面，不下发设备指令。打开历史会话为只读回放，可选择试验行并导出报告。
+- 本地规则解释无需网络。可选云端解释当前仅接入 OpenAI，未实现 DeepSeek 接口。
+- 云端解释需提供可用的模型 ID 和 API Key，并明确确认上传。发送内容为可预览的参数、配置及指标摘要，不包含原始波形或串口日志；密钥不由应用写入磁盘。
+- 云端请求设置 `store=false`，但这不等同于零数据保留。调用可能产生费用；云端功能不可用不影响本地调参。
+
+## 开发与测试
+
+### 回归测试
+
+Windows：
 
 ```powershell
-.\venv\Scripts\python.exe -X utf8 tests/gui_smoke.py
+.\venv\Scripts\python.exe -B -X utf8 -m unittest discover -s tests -v
 ```
 
-### Windows：com0com
+测试覆盖串口分帧与回环、UTF-8/HEX 收发、PID 输入和实际发送精度、主题切换、波形导出、阶跃评分、安全约束、优化候选、自动试验、异常停止、档案持久化及只读回放。云端接口采用模拟响应测试，不使用真实密钥。
 
-安装 [com0com](https://sourceforge.net/projects/com0com/)，创建一对互联端口，例如 `COM20 ↔ COM21`。
-
-启动虚拟数据发送器：
+### 界面集成测试
 
 ```powershell
-.\venv\Scripts\python.exe .\virtual_serial_sender.py COM20
+.\venv\Scripts\python.exe -B -X utf8 tests/gui_smoke.py
 ```
 
-然后启动 Nova，选择 `COM21`、`115200` 波特率并打开串口。
+该测试使用 Qt 事件循环和 `sim://` 后台串口，验证完整自动调参、最优复测、参数接受及试验中断开连接。运行约一分钟，默认离屏执行；截图与报告保存在被 Git 忽略的 `.test-artifacts/` 中。
 
-### Linux / macOS：socat
+Linux / macOS 可将上述 Python 路径替换为 `./venv/bin/python`。当前不提供这些平台已通过验证的承诺。
 
-```bash
-socat -d -d \
-  pty,raw,echo=0,link=/tmp/ttyV0 \
-  pty,raw,echo=0,link=/tmp/ttyV1
+### 虚拟串口发送器
+
+`virtual_serial_sender.py` 可连接已有的虚拟串口对，用于验证旧版遥测收发与波形显示：
+
+```powershell
+.\venv\Scripts\python.exe virtual_serial_sender.py COM20
 ```
 
-```bash
-python virtual_serial_sender.py /tmp/ttyV0
-```
+随后让 Nova 连接配对端口，例如 `COM21`，波特率为 `115200`。该发送器输出连续变化的数据，不适合作为自动阶跃调参试验源；完整流程请使用 `sim://`。
 
-Nova 连接 `/tmp/ttyV1` 即可。
-
-> ℹ️ 当前虚拟发送器主要用于验证串口收发与波形显示，它发送的是连续变化数据，不是标准阶跃，因此不适合作为完整 AI 调参试验源。
-
----
-
-## 🗂️ 项目结构
+## 项目结构
 
 ```text
 Nova/
-├── main.py                    # 🚀 应用入口、导航、状态栏与数据路由
-├── serial_page.py             # 🔌 串口配置与收发界面
-├── serial_worker.py           # 🧵 串口后台读写线程
-├── pid_page.py                # 📈 手动 PID 调参与实时波形
-├── ai_tuning_page.py          # ✨ AI 调参界面与交互流程
-├── i18n.py                    # 🌐 中英文翻译
-├── virtual_serial_sender.py   # 🧪 虚拟串口数据发送器
+├── main.py                  # 应用入口、导航与数据路由
+├── serial_page.py           # 串口收发界面
+├── serial_worker.py         # 后台串口读写与分帧
+├── pid_page.py              # 手动 PID 与实时波形
+├── ai_tuning_page.py        # 调参工作区与交互
+├── theme.py                 # 深浅主题
+├── i18n.py                  # 中英文翻译
+├── virtual_serial_sender.py # 旧版遥测发送器
 ├── tuning/
-│   ├── models.py              # 调参数据模型
-│   ├── metrics.py             # 阶跃识别与性能指标
-│   ├── safety.py              # 安全规则与候选检查
-│   ├── optimizer.py           # 高斯过程贝叶斯优化器
-│   ├── session.py             # 调参会话状态机
-│   ├── simulator.py           # 一阶对象仿真器
-│   ├── device.py              # sim:// 闭环设备、保护与故障注入
-│   ├── protocol.py            # Nova v2 命令、确认及遥测
-│   ├── automatic.py           # 自动试验状态机
-│   ├── config_dialog.py       # 设备档案编辑
-│   ├── reporting.py           # HTML/CSV 报告与本地解释
-│   ├── cloud_advisor.py       # 可选只读云端解释
-│   └── storage.py             # 会话持久化
-├── tests/                     # ✅ 自动化测试
-├── images/                    # 🖼️ README 界面截图
-└── requirements.txt           # 📦 Python 依赖
+│   ├── models.py            # 数据模型与配置校验
+│   ├── metrics.py           # 阶跃识别与性能评分
+│   ├── safety.py            # 安全约束
+│   ├── optimizer.py         # 高斯过程贝叶斯优化
+│   ├── session.py           # 采集会话
+│   ├── automatic.py         # 自动试验状态机
+│   ├── protocol.py          # 协议编解码
+│   ├── simulator.py         # 一阶对象仿真
+│   ├── device.py            # 模拟设备与故障注入
+│   ├── config_dialog.py     # 设备档案编辑
+│   ├── storage.py           # JSON 持久化
+│   ├── reporting.py         # 报告与本地解释
+│   └── cloud_advisor.py     # 可选只读云端解释
+├── tests/                   # 回归与界面集成测试
+├── images/                  # 界面截图
+└── requirements.txt         # 运行依赖
 ```
 
----
+## 界面预览
 
-## ✅ 运行测试
+以下截图用于展示页面布局，具体控件以当前版本为准。
 
-```powershell
-.\venv\Scripts\python.exe -m unittest discover -s tests -v
-```
+<details>
+<summary>串口收发</summary>
 
-当前测试覆盖：
+![串口收发界面](images/串口收发.png)
 
-- 阶跃响应识别与评分；
-- 无阶跃和连续变化目标值拒绝；
-- PID 参数范围与单次变化约束；
-- 实时超调中止；
-- 采样时间轴重建；
-- 贝叶斯优化候选生成与安全检查。
-- 六位小数键盘输入、跨页面同步、主题与提示弹窗回归；
-- 大批量串口分帧、UTF-8 分块、HEX 原始发送、控制权互斥；
-- 自动试验完整闭环、人工确认、最优复测、分步恢复与故障注入；
-- 只读历史、档案往返、报告导出与云端接口模拟测试；
-- 固定种子一阶仿真基准中，12 轮试验最佳评分从约 49.84 降至 20.83。该结果仅验证此仿真场景，不代表真实设备收益。
+</details>
 
----
+<details>
+<summary>手动 PID 调参</summary>
 
-## 📦 打包 Windows EXE
+![手动 PID 调参界面](images/PID调参.png)
 
-```powershell
-pip install pyinstaller
-pyinstaller --onefile --windowed --name "Nova" main.py
-```
+</details>
 
-生成文件位于：
+<details>
+<summary>AI 辅助调参</summary>
 
-```text
-dist/Nova.exe
-```
+![AI 辅助调参界面](images/AI调参.png)
 
----
+</details>
 
-## 🛣️ Roadmap
+## 贡献
 
-- [x] 🔌 串口字符串 / 十六进制收发
-- [x] 📈 PID 实时双曲线
-- [x] 🎚️ 2～6 位独立精度调参
-- [x] 🧠 本地贝叶斯优化推荐
-- [x] 🛡️ AI 调参安全边界与基准恢复
-- [x] 💾 调参会话自动保存
-- [x] 🤝 Nova v2 PID / Setpoint ACK 协议与能力检查
-- [x] 🤖 自动目标值阶跃、受限自动迭代与最优复测
-- [x] 📄 HTML / CSV / JSON 调参报告
-- [x] 🗃️ 设备档案、方案保存、历史回放与波形测量
-- [x] 🧪 内置闭环模拟设备与故障测试
-- [x] 💬 本地解释与可选只读云端分析
-- [ ] 📦 自动化构建与版本发布
+提交问题时，请提供操作系统、Python 版本、复现步骤、预期与实际行为，以及脱敏后的日志或协议帧。请勿提交 API Key、设备凭据或敏感采样数据。
 
----
-
-## 🤝 贡献
-
-欢迎提交 Issue、功能建议和 Pull Request！
-
-```bash
-git checkout -b feature/amazing-feature
-git commit -m "feat: add amazing feature"
-git push origin feature/amazing-feature
-```
-
----
-
-## 🧩 技术栈
-
-- [PySide6](https://doc.qt.io/qtforpython/) — 跨平台 Qt 桌面 UI
-- [pyqtgraph](https://www.pyqtgraph.org/) — 高性能实时科学绘图
-- [pyserial](https://pyserial.readthedocs.io/) — 跨平台串口通信
-- [NumPy](https://numpy.org/) — 数值计算与轻量高斯过程实现
-
----
-
-<div align="center">
-
-### 🌠 Tune smarter. Control better.
-
-如果 Nova 对你的项目有帮助，欢迎点亮一颗 ⭐
-
-**Made with ❤️, Python and a little bit of AI.**
-
-</div>
+提交修改前运行回归测试；涉及界面、串口或自动调参流程的变更，请同时运行界面集成测试。修复缺陷时应附带能够复现问题的测试。
