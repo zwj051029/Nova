@@ -1,4 +1,6 @@
 import math
+import json
+from dataclasses import replace
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +15,27 @@ from tuning.simulator import FirstOrderPlant
 
 
 class QualityTests(unittest.TestCase):
+    def test_safety_configuration_rejects_invalid_thresholds(self):
+        for changes in ({"minimum_step": 0}, {"minimum_step": float("nan")},
+                        {"settling_tolerance_percent": -1},
+                        {"settling_tolerance_percent": float("inf")},
+                        {"max_trials": 3.5}, {"channel": True},
+                        {"minimum_samples": 4.5}, {"patience": float("nan")},
+                        {"locked": (False, "false", False)}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                replace(TuningConfig(), **changes).validate()
+
+    def test_saving_over_invalid_json_does_not_break_session(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as directory:
+            path = Path(directory) / "existing.json"
+            for contents in ("{broken", "[]"):
+                path.write_text(contents, encoding="utf-8")
+                save_session(Path(directory), PIDGains(1, 0, 0), TuningConfig(), [], path)
+                self.assertEqual(load_session(path)[0], PIDGains(1, 0, 0))
+                created = json.loads(path.read_text(encoding="utf-8"))["created_at"]
+                save_session(Path(directory), PIDGains(2, 0, 0), TuningConfig(), [], path)
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["created_at"], created)
+
     def test_nonfinite_and_last_sample_not_settled(self):
         samples = [TelemetrySample(i*.1, 0 if i<5 else 1, 0 if i<5 else .5, .2) for i in range(30)]
         samples[-1] = TelemetrySample(2.9, 1, 1, .2)

@@ -35,6 +35,8 @@ def atomic_json(path: Path, payload: dict) -> None:
 
 
 def config_from_dict(data: dict) -> TuningConfig:
+    if not isinstance(data, dict):
+        raise ValueError("配置必须为 JSON 对象")
     values = dict(data)
     for key in ("gain_min", "gain_max", "gain_resolution"):
         if key in values:
@@ -52,11 +54,17 @@ def load_session(path: Path):
     if path.stat().st_size > 64 * 1024 * 1024:
         raise ValueError("会话文件超过 64 MiB 限制")
     data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("会话必须为 JSON 对象")
     if data.get("schema_version", 1) not in (1, 2):
         raise ValueError("不支持的会话版本")
     config = config_from_dict(data["config"])
     history = []
+    if not isinstance(data["trials"], list):
+        raise ValueError("试验记录必须为数组")
     for trial in data["trials"]:
+        if not isinstance(trial, dict) or not isinstance(trial.get("metrics"), dict):
+            raise ValueError("试验记录和指标必须为 JSON 对象")
         metrics = {key: value for key, value in trial["metrics"].items() if value is not None}
         gains=PIDGains(**trial["gains"])
         if not all(isinstance(v,(int,float)) and math.isfinite(v) and 0<=v<=1e6 for v in gains.as_array()):
@@ -83,7 +91,14 @@ def save_session(
         path = directory / f"pid_tuning_{datetime.now():%Y%m%d_%H%M%S_%f}.json"
     created = datetime.now().isoformat(timespec="seconds")
     if path.exists():
-        created = json.loads(path.read_text(encoding="utf-8")).get("created_at", created)
+        # Existing exports may be empty/corrupt. Their optional creation date
+        # must not prevent saving the current in-memory session atomically.
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, UnicodeError):
+            existing = None
+        if isinstance(existing, dict) and isinstance(existing.get("created_at"), str):
+            created = existing["created_at"]
     payload = {
         "schema_version": 2,
         "created_at": created,

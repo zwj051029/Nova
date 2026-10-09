@@ -318,11 +318,11 @@ class AutomaticTuner:
         gains = self.verified.gains if accept else self.original
         self._status("deciding", "等待最终参数确认（设备保持停止）")
         def confirmed(ack):
-            if tuple(ack["gains"]) != gains.as_array():
-                raise ValueError("最终参数确认不一致")
+            # _apply_bounded already validates the acknowledgement to the
+            # protocol's six-decimal resolution, including the final step.
             self.lease = False
             if self.on_applied:
-                self.on_applied(gains)
+                self.on_applied(self.applied)
             self._status("accepted" if accept else "restored", "参数已确认保存到设备 RAM，输出保持停止；未写入 Flash")
         try:
             self._apply_bounded(gains, confirmed)
@@ -333,6 +333,10 @@ class AutomaticTuner:
         if self.state in self.TERMINAL:
             return
         if self.state == "stopping":
+            # Repeated clicks/fault frames must not cancel an outstanding STOP.
+            # A rejected, timed-out or failed send clears pending first.
+            if self.pending and self.pending[1] == "stop":
+                return
             self.lease = False
             self.pending = None
             self._status("aborted", self.failure + "；停止未确认，依赖设备看门狗")

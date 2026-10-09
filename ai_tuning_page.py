@@ -170,12 +170,13 @@ class AiTuningPage(QWidget):
         self._gain_max = self._gain_spin(100.0)
         self._gain_max.setToolTip("修改此处会覆盖三个参数上限；独立范围请使用设备档案。")
         self._gain_max.valueChanged.connect(self._uniform_max)
-        self._relative_change = QSpinBox()
-        self._relative_change.setRange(1, 100)
+        self._relative_change = QDoubleSpinBox()
+        self._relative_change.setDecimals(4)
+        self._relative_change.setRange(.0001, 100)
         self._relative_change.setValue(20)
         self._relative_change.setSuffix(" %")
         self._max_trials = QSpinBox()
-        self._max_trials.setRange(4, 100)
+        self._max_trials.setRange(1, 100)
         self._max_trials.setValue(20)
         self._capture_seconds = QDoubleSpinBox()
         self._capture_seconds.setRange(2.0, 600.0)
@@ -199,6 +200,7 @@ class AiTuningPage(QWidget):
         self._actual_max = self._wide_spin(1_000_000.0)
         self._output_max = self._wide_spin(1_000_000.0)
         self._overshoot_max = QDoubleSpinBox()
+        self._overshoot_max.setDecimals(6)
         self._overshoot_max.setRange(0.0, 500.0)
         self._overshoot_max.setValue(30.0)
         self._overshoot_max.setSuffix(" %")
@@ -370,7 +372,7 @@ class AiTuningPage(QWidget):
         self._gain_max.blockSignals(True)
         self._gain_max.setValue(max(config.gain_max.as_array()))
         self._gain_max.blockSignals(False)
-        self._relative_change.setValue(round(config.safety.max_relative_gain_change*100))
+        self._relative_change.setValue(config.safety.max_relative_gain_change*100)
         self._max_trials.setValue(config.max_trials)
         self._capture_seconds.setValue(config.capture_seconds)
         self._sample_period_ms.setValue(config.sample_period_seconds*1000)
@@ -409,6 +411,8 @@ class AiTuningPage(QWidget):
             return
         try:
             data=json.loads(Path(filename).read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("档案必须为 JSON 对象")
             if data.get("schema_version") != 1:
                 raise ValueError("不支持的档案版本")
             config=config_from_dict(data["config"])
@@ -665,20 +669,19 @@ class AiTuningPage(QWidget):
 
     def refresh_plot(self) -> None:
         samples = self._session.samples if self._session else []
-        if samples:
-            stride = max(1, len(samples) // 2000)
-            visible = samples[::stride]
-            self._sp_curve.setData([s.timestamp for s in visible], [s.setpoint for s in visible])
-            self._pv_curve.setData([s.timestamp for s in visible], [s.actual for s in visible])
+        if self._session and not self._session.capturing:
+            row = self._table.currentRow()
+            if 0 <= row < len(self._session.history):
+                samples = self._session.history[row].samples
+        stride = max(1, (len(samples) + 1999) // 2000)
+        visible = samples[::stride]
+        self._sp_curve.setData([s.timestamp for s in visible], [s.setpoint for s in visible])
+        self._pv_curve.setData([s.timestamp for s in visible], [s.actual for s in visible])
 
     def _preview_trial(self) -> None:
         if not self._session or self._session.capturing:
             return
-        row = self._table.currentRow()
-        if 0 <= row < len(self._session.history):
-            samples = self._session.history[row].samples
-            self._sp_curve.setData([s.timestamp for s in samples], [s.setpoint for s in samples])
-            self._pv_curve.setData([s.timestamp for s in samples], [s.actual for s in samples])
+        self.refresh_plot()
 
     def _begin_capture_ui(self) -> None:
         self._capture_t0 = time.monotonic()

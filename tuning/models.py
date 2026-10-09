@@ -95,12 +95,15 @@ class TuningConfig:
             raise ValueError("参数范围或分辨率无效（协议最小分辨率为 0.000001）")
         numeric = (self.capture_seconds, self.sample_period_seconds, self.settling_hold_seconds,
                    self.stable_seconds, self.stability_timeout, self.pre_seconds,
-                   self.safety.telemetry_timeout, self.safety.saturation_seconds, self.stable_tolerance)
+                   self.safety.telemetry_timeout, self.safety.saturation_seconds, self.stable_tolerance,
+                   self.minimum_step, self.settling_tolerance_percent)
         if not all(math.isfinite(v) and v > 0 for v in numeric):
             raise ValueError("时间和容差必须为正数")
-        if not 1 <= self.max_trials <= 100 or self.minimum_samples < 3 or self.channel < 0:
+        if (any(type(v) is not int for v in (self.max_trials, self.minimum_samples, self.channel, self.patience))
+                or not 1 <= self.max_trials <= 100 or self.minimum_samples < 3 or self.channel < 0):
             raise ValueError("试验数、采样数或通道无效")
-        if self.mode not in ("P", "PI", "PID") or len(self.locked) != 3:
+        if (self.mode not in ("P", "PI", "PID") or not isinstance(self.locked, (list, tuple))
+                or len(self.locked) != 3 or any(type(v) is not bool for v in self.locked)):
             raise ValueError("控制模式无效")
         limits = self.safety
         if not all(math.isfinite(v) for v in (limits.actual_min, limits.actual_max, limits.output_abs_max,

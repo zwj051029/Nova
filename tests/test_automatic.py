@@ -37,6 +37,55 @@ class Harness:
 
 
 class AutomaticTests(unittest.TestCase):
+    def test_repeated_stop_still_times_out_without_ack(self):
+        h = Harness()
+        h.run(until=("capturing", "aborted"))
+        h.tuner.stop()
+        h.tuner.stop()
+        h.queue.clear()
+        h.time += 2
+        h.tuner.tick()
+        self.assertEqual(h.tuner.state, "aborted")
+        self.assertIn("停止未确认", h.tuner.message)
+        self.assertFalse(h.tuner.lease)
+
+    def test_final_ack_rejects_change_above_resolution(self):
+        h = Harness()
+        self.assertEqual(h.run(), "review")
+        h.tuner.decide(True)
+        for i, line in enumerate(h.queue):
+            ack = decode(line)
+            if ack.get("cmd") == "set_pid":
+                ack["gains"][0] += .00001
+                h.queue[i] = encode(ack).decode()
+        self.assertEqual(h.run(until=("accepted", "aborted")), "aborted")
+        self.assertIn("PID", h.tuner.message)
+
+    def test_repeated_stop_keeps_waiting_for_ack(self):
+        h = Harness()
+        h.run(until=("capturing", "aborted"))
+        h.tuner.stop()
+        pending = h.tuner.pending
+        h.tuner.stop()
+        h.tuner.handle_line(encode({"type": "fault", "channel": 1, "reason": "watchdog"}).decode())
+        self.assertEqual(h.tuner.state, "stopping")
+        self.assertEqual(h.tuner.pending, pending)
+        self.assertEqual(h.run(), "aborted")
+        self.assertIn("已确认停止", h.tuner.message)
+
+    def test_final_ack_allows_transport_rounding(self):
+        h = Harness()
+        self.assertEqual(h.run(), "review")
+        original = h.device.command
+        def rounded(message):
+            ack = original(message)
+            if message.get("cmd") == "set_pid":
+                ack["gains"] = [value + 1e-8 for value in ack["gains"]]
+            return ack
+        h.device.command = rounded
+        h.tuner.decide(True)
+        self.assertEqual(h.run(until=("accepted", "aborted")), "accepted", h.tuner.message)
+
     def test_complete_automatic_and_accept(self):
         h = Harness()
         self.assertEqual(h.run(), "review", h.tuner.message)

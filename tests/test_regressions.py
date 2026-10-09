@@ -1,4 +1,5 @@
 import os
+import csv
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import unittest
 import tempfile
@@ -9,13 +10,124 @@ from PySide6.QtTest import QTest
 from PySide6.QtCore import Qt
 from main import MainWindow
 from serial_worker import LineFramer, SerialWorker
-from tuning.models import PIDGains, ResponseMetrics, TrialResult, TuningConfig
+from tuning.models import PIDGains, ResponseMetrics, TrialResult, TuningConfig, TelemetrySample, SafetyLimits
+from tuning.session import TuningSession
 from tuning.optimizer import BayesianPIDOptimizer
 from tuning.config_dialog import ConfigDialog
 from tuning.storage import save_session
 
 
 class RegressionTests(unittest.TestCase):
+    def test_pid_transmission_keeps_independent_precision(self):
+        window = MainWindow()
+        try:
+            page = window._pid_page
+            page.set_values(1.234567, .000123, .12)
+            page._pid_ki.precision_decrease_btn.click()
+            self.assertEqual(page._pid_kp._decimals, 6)
+            self.assertEqual(page._pid_ki._decimals, 5)
+            self.assertEqual(page._pid_kd._decimals, 2)
+            with patch.object(window._worker, "is_open", return_value=True), patch.object(window._worker, "write") as write:
+                page._send_all()
+                write.assert_called_with(b"PID:1.234567,0.00012,0.12\r\n")
+                page._send_single(page._pid_kp)
+                write.assert_called_with(b"PID:Kp=1.234567\r\n")
+        finally:
+            window.close()
+
+    def test_pid_waveform_channel_pause_and_csv(self):
+        window = MainWindow()
+        try:
+            page = window._pid_page
+            page.ingest_line(">2,10,20,30")
+            self.assertEqual(len(page._buf_actual), 0)
+            page.ingest_line(">1,1,0.5,0.2")
+            page.refresh_plot()
+            page._pause.setChecked(True)
+            page.ingest_line(">1,1,0.75,0.3")
+            page.refresh_plot()
+            self.assertEqual(list(page._curve_actual.getData()[1]), [.5])
+            with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as directory:
+                path = Path(directory) / "waveform.csv"
+                with patch("pid_page.QFileDialog.getSaveFileName", return_value=(str(path), "CSV")):
+                    page._export_waveform()
+                with path.open(encoding="utf-8-sig", newline="") as stream:
+                    rows = list(csv.reader(stream))
+                self.assertEqual(len(rows), 2)
+                self.assertEqual(rows[1][1:], ["1.0", "0.5", "0.2"])
+            page._pause.setChecked(False)
+            page.refresh_plot()
+            self.assertEqual(list(page._curve_actual.getData()[1]), [.5, .75])
+        finally:
+            window.close()
+
+    def test_serial_loopback_reconnect_and_counters(self):
+        worker = SerialWorker()
+        chunks, lines = [], []
+        worker.chunk_received.connect(chunks.append)
+        worker.lines_received.connect(lines.extend)
+        try:
+            for _ in range(2):
+                chunks.clear()
+                lines.clear()
+                worker.open("loop://", 115200)
+                payload = "中文回环\n>1,1,0.5,0.2\n".encode("utf-8")
+                worker.write(payload)
+                for _ in range(100):
+                    QTest.qWait(10)
+                    if len(lines) == 2:
+                        break
+                self.assertEqual(b"".join(chunks), payload)
+                self.assertEqual(lines, ["中文回环", ">1,1,0.5,0.2"])
+                self.assertEqual(worker.rx_bytes, len(payload))
+                self.assertEqual(worker.tx_bytes, len(payload))
+                worker.close()
+                self.assertFalse(worker.is_open())
+        finally:
+            worker.close()
+
+    def test_selected_trial_survives_live_refresh(self):
+        window = MainWindow()
+        page = window._ai_page
+        page._session = TuningSession(TuningConfig())
+        samples = [TelemetrySample(0, 1, .25, 0), TelemetrySample(1, 1, .5, 0)]
+        trial = TrialResult(1, PIDGains(1, 0, 0), ResponseMetrics(True, score=1), True, samples=samples)
+        page._session.history = [trial]
+        page._session.samples = [TelemetrySample(0, 2, 3, 0)]
+        page._append_result(trial)
+        page._table.selectRow(0)
+        page.refresh_plot()
+        self.assertEqual(list(page._pv_curve.getData()[1]), [.25, .5])
+        page._session.capturing = True
+        page.refresh_plot()
+        self.assertEqual(list(page._pv_curve.getData()[1]), [3])
+        page._session.capturing = False
+        window.close()
+
+    def test_profile_safety_precision_is_not_rounded(self):
+        window = MainWindow()
+        config = TuningConfig(max_trials=3, safety=SafetyLimits(
+            max_relative_gain_change=.155123, max_overshoot_percent=12.345678))
+        window._ai_page._apply_config(config)
+        actual = window._ai_page._config()
+        self.assertAlmostEqual(actual.safety.max_relative_gain_change, .155123, places=8)
+        self.assertAlmostEqual(actual.safety.max_overshoot_percent, 12.345678, places=8)
+        self.assertEqual(actual.max_trials, 3)
+        window.close()
+
+    def test_invalid_json_shapes_are_reported_without_crashing(self):
+        window = MainWindow()
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as directory:
+            path = Path(directory) / "invalid.json"
+            for contents in ("[]", '{"config":{},"baseline":{},"trials":[[]]}'):
+                path.write_text(contents, encoding="utf-8")
+                with patch("ai_tuning_page.QFileDialog.getOpenFileName", return_value=(str(path), "JSON")), patch.object(window._ai_page, "_toast") as toast:
+                    window._ai_page._open_history()
+                    self.assertFalse(toast.call_args.args[1])
+                    window._ai_page._load_profile()
+                    self.assertFalse(toast.call_args.args[1])
+        window.close()
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
