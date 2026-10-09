@@ -18,6 +18,22 @@ from tuning.storage import save_session
 
 
 class RegressionTests(unittest.TestCase):
+    def test_application_icon_has_all_windows_sizes(self):
+        from app_assets import application_icon
+        icon = application_icon()
+        self.assertFalse(icon.isNull())
+        self.assertEqual({size.width() for size in icon.availableSizes()},
+                         {16, 24, 32, 48, 64, 128, 256})
+        for size in (16, 32, 256):
+            self.assertFalse(icon.pixmap(size, size).isNull())
+
+    def test_main_window_has_application_icon(self):
+        window = MainWindow()
+        try:
+            self.assertFalse(window.windowIcon().isNull())
+        finally:
+            window.close()
+
     def test_pid_transmission_keeps_independent_precision(self):
         window = MainWindow()
         try:

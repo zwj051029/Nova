@@ -14,6 +14,7 @@ from pid_page import PidPage
 from ai_tuning_page import AiTuningPage
 from tuning.models import PIDGains
 from theme import colors, global_style, load_theme, nav_button_style, save_theme
+from app_assets import application_icon, configure_windows_app_id
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +162,7 @@ class _StatusIndicator(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowIcon(application_icon())
         self.resize(1280, 800)
         self._theme = load_theme()
 
@@ -461,7 +463,9 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
+    configure_windows_app_id()
     app = QApplication(sys.argv)
+    app.setWindowIcon(application_icon())
     app.setOrganizationName("Nova")
     app.setApplicationName("Nova")
     from version import __version__

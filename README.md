@@ -242,6 +242,8 @@ Linux / macOS 可将上述 Python 路径替换为 `./venv/bin/python`。当前�
 
 构建脚本使用 [PyInstaller](https://pyinstaller.org/en/stable/) 生成便携目录，并在 `dist/` 输出 ZIP 和 `SHA256SUMS.txt`，同时附带运行依赖许可与构建版本信息。发布前应运行回归与界面集成测试，并对打包后的 `Nova.exe` 做启动和模拟串口验证。
 
+应用图标位于 `assets/`，窗口与 Windows EXE 共用 `nova.ico`。修改原始 `nova.png` 后，可运行 `python scripts/build_icon.py` 重新生成 16–256 像素的多尺寸 ICO，再重新构建发行包。
+
 重新生成 README 的六张截图：
 
 ```powershell
@@ -276,6 +278,7 @@ Nova/
 │   └── cloud_advisor.py     # 可选只读云端解释
 ├── tests/                   # 回归与界面集成测试
 ├── images/                  # 界面截图
+├── assets/                  # 应用图标 PNG 与多尺寸 ICO
 └── requirements.txt         # 运行依赖
 ```
 

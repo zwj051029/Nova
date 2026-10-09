@@ -30,6 +30,8 @@ def main():
     subprocess.run([
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
         "--onedir", "--windowed", "--name", "Nova",
+        "--icon", str(ROOT / "assets" / "nova.ico"),
+        "--add-data", str(ROOT / "assets" / "nova.ico") + os.pathsep + "assets",
         "--version-file", str(ROOT / "packaging" / "windows-version.txt"),
         "--collect-submodules", "serial.urlhandler",
         "--distpath", "dist", "--workpath", "build/pyinstaller",
