@@ -305,6 +305,7 @@ class SerialPage(QWidget):
         self._brk_chk = QCheckBox("Break")
         for chk in (self._dtr_chk, self._rts_chk, self._brk_chk):
             sig_row.addWidget(chk)
+            chk.toggled.connect(self._update_signals)
         sig_row.addStretch()
         sig_widget = QWidget()
         sig_widget.setLayout(sig_row)
@@ -356,6 +357,7 @@ class SerialPage(QWidget):
         v.addLayout(hdr)
 
         self._send_box = QPlainTextEdit()
+        self._send_box.setMaximumBlockCount(10000)
         self._send_box.setReadOnly(True)
         self._send_box.setFont(_MONO_FONT)
         self._send_box.setStyleSheet(_BOX_STYLE_SEND)
@@ -385,12 +387,17 @@ class SerialPage(QWidget):
         self._interval_spin.setRange(50, 60000)
         self._interval_spin.setValue(1000)
         self._interval_spin.setMinimumWidth(90)
+        self._interval_spin.valueChanged.connect(self._loop_timer.setInterval)
+        self._suffix_combo = QComboBox()
+        self._suffix_combo.addItems(["CRLF", "LF", "CR", "None"])
+        self._suffix_combo.setToolTip("发送结尾 / Line ending")
 
         self._interval_label = QLabel()
 
         opt_row = QHBoxLayout()
         opt_row.setSpacing(8)
         opt_row.addWidget(self._mode_btn)
+        opt_row.addWidget(self._suffix_combo)
         opt_row.addSpacing(4)
         opt_row.addWidget(self._loop_chk)
         opt_row.addWidget(self._interval_spin)
@@ -426,6 +433,7 @@ class SerialPage(QWidget):
         v.addLayout(hdr)
 
         self._recv_box = QPlainTextEdit()
+        self._recv_box.setMaximumBlockCount(10000)
         self._recv_box.setReadOnly(True)
         self._recv_box.setFont(_MONO_FONT)
         self._recv_box.setStyleSheet(_BOX_STYLE_RECV)
@@ -577,10 +585,26 @@ class SerialPage(QWidget):
                     bytesize=bytesize_map.get(self._bytesize_combo.currentText(), serial.EIGHTBITS),
                     parity=parity_map.get(self._parity_combo.currentText(), serial.PARITY_NONE),
                     stopbits=stopbits_map.get(self._stopbits_combo.currentText(), serial.STOPBITS_ONE),
+                    xonxoff=self._flow_combo.currentText() == "XON/XOFF",
+                    rtscts=self._flow_combo.currentText() == "RTS/CTS",
+                    dsrdtr=self._flow_combo.currentText() == "DSR/DTR",
                 )
+                self._update_signals()
                 self._update_controls(opened=True)
             except Exception as e:
                 self._append_to(self._recv_box, t("error_open_port") + str(e), "#C62828")
+
+    def handle_disconnect(self) -> None:
+        self._loop_chk.setChecked(False)
+        self._loop_timer.stop()
+        self._update_controls(False)
+
+    def _update_signals(self) -> None:
+        try:
+            self._worker.set_signals(self._dtr_chk.isChecked(), self._rts_chk.isChecked(), self._brk_chk.isChecked())
+        except Exception as exc:
+            if self.on_toast:
+                self.on_toast(str(exc), False)
 
     def _update_controls(self, opened: bool) -> None:
         t = self._tr.tr
@@ -615,18 +639,25 @@ class SerialPage(QWidget):
         if not text:
             return
         t = self._tr.tr
+        suffix = {"CRLF": b"\r\n", "LF": b"\n", "CR": b"\r", "None": b""}[self._suffix_combo.currentText()]
         if self._is_hex_mode:
             try:
-                data = bytes.fromhex(text.replace(" ", "")) + b"\r\n"
+                data = bytes.fromhex(text.replace(" ", "")) + suffix
             except ValueError as e:
                 self._append_to(self._recv_box, t("hex_error") + str(e), "#C62828")
                 return
             display = " ".join(f"{b:02X}" for b in data)
         else:
-            data = (text + "\r\n").encode("utf-8")
+            data = text.encode("utf-8") + suffix
             display = text
 
-        self._worker.write(data)
+        try:
+            self._worker.write(data)
+        except Exception as exc:
+            self._loop_chk.setChecked(False)
+            if self.on_toast:
+                self.on_toast(str(exc), False)
+            return
         self._append_to(self._send_box, display, "#1565C0")
         if self.on_data_sent:
             self.on_data_sent()
@@ -652,6 +683,7 @@ class SerialPage(QWidget):
 
     def _toggle_mode(self) -> None:
         self._is_hex_mode = not self._is_hex_mode
+        self._suffix_combo.setCurrentText("None" if self._is_hex_mode else "CRLF")
         self._update_mode_btn()
 
     def _toggle_recv_mode(self) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 
 from .metrics import analyze_step_response
-from .models import PIDGains, TelemetrySample, TrialResult, TuningConfig
+from .models import PIDGains, TelemetrySample, TrialResult, TuningConfig, ResponseMetrics
 from .optimizer import BayesianPIDOptimizer
 from .safety import check_live_sample, validate_candidate
 
@@ -82,6 +82,14 @@ class TuningSession:
             samples=list(self.samples),
         )
         self.history.append(result)
+        return result
+
+    def record_failure(self, reason: str) -> TrialResult:
+        result = TrialResult(len(self.history) + 1, self.current_gains,
+                             ResponseMetrics(False, reason, sample_count=len(self.samples)),
+                             False, self.capture_is_baseline, list(self.samples))
+        self.history.append(result)
+        self.capturing = False
         return result
 
     def suggest(self) -> tuple[PIDGains, str]:

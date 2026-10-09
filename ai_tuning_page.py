@@ -49,7 +49,8 @@ def _parse_pid_frame(line: str) -> tuple[float, float, float] | None:
         if len(fields) != 4:
             return None
         int(fields[0])
-        return float(fields[1]), float(fields[2]), float(fields[3])
+        values = tuple(float(field) for field in fields[1:])
+        return values if all(math.isfinite(value) for value in values) else None
     except ValueError:
         return None
 
@@ -307,6 +308,7 @@ class AiTuningPage(QWidget):
         self._proposed_value.setText("--")
         self._table.setRowCount(0)
         if self._send_pid(gains):
+            self._worker.acquire("ai")
             self._session.start_capture(gains, is_baseline=True)
             self._begin_capture_ui()
 
@@ -331,6 +333,7 @@ class AiTuningPage(QWidget):
             self._toast(result.metrics.reason, False)
         self._refresh_buttons()
         self._save_session()
+        self._worker.release("ai")
 
     def _suggest(self) -> None:
         if not self._session:
@@ -355,6 +358,7 @@ class AiTuningPage(QWidget):
             return
         proposed = self._proposed
         if self._send_pid(proposed):
+            self._worker.acquire("ai")
             self._session.start_capture(proposed)
             self._proposed = None
             self._begin_capture_ui()
@@ -369,10 +373,11 @@ class AiTuningPage(QWidget):
         self._set_status(self._tr.tr("ai_aborted"), "#F53F3F")
         self._hint.setText(self._tr.tr("ai_abort_hint"))
         self._refresh_buttons()
+        self._worker.release("ai")
 
     def _send_pid(self, gains: PIDGains) -> bool:
         try:
-            self._worker.write(f"PID:{gains.formatted()}\r\n".encode("utf-8"))
+            self._worker.write(f"PID:{gains.formatted()}\r\n".encode("utf-8"), owner="ai")
             if self.on_data_sent:
                 self.on_data_sent()
             if self.on_pid_applied:
@@ -387,19 +392,25 @@ class AiTuningPage(QWidget):
         if parsed is None or not self._session or not self._session.capturing:
             return
         safe, reason = self._session.ingest(*parsed)
-        samples = self._session.samples
-        if samples:
-            t0 = samples[0].timestamp
-            x = [sample.timestamp - t0 for sample in samples]
-            self._sp_curve.setData(x, [sample.setpoint for sample in samples])
-            self._pv_curve.setData(x, [sample.actual for sample in samples])
         if not safe:
+            result = self._session.record_failure(reason)
+            self._append_result(result)
+            self._save_session()
             baseline = self._session.abort()
             if baseline and self._worker.is_open():
                 self._send_pid(baseline)
             self._set_status(self._tr.tr("ai_safety_abort"), "#F53F3F")
             self._toast(reason, False)
             self._refresh_buttons()
+            self._worker.release("ai")
+
+    def refresh_plot(self) -> None:
+        samples = self._session.samples if self._session else []
+        if samples:
+            stride = max(1, len(samples) // 2000)
+            visible = samples[::stride]
+            self._sp_curve.setData([s.timestamp for s in visible], [s.setpoint for s in visible])
+            self._pv_curve.setData([s.timestamp for s in visible], [s.actual for s in visible])
 
     def _begin_capture_ui(self) -> None:
         self._capture_t0 = time.monotonic()
@@ -449,8 +460,8 @@ class AiTuningPage(QWidget):
             self._session_path = save_session(
                 Path(base) / "tuning_sessions", self._session.baseline,
                 self._session.config, self._session.history, self._session_path)
-        except OSError:
-            pass
+        except OSError as exc:
+            self._toast(f"保存失败: {exc}", False)
 
     def _require_connection(self) -> bool:
         if not self._worker.is_open():
@@ -461,17 +472,20 @@ class AiTuningPage(QWidget):
     def set_connected(self, connected: bool) -> None:
         self._connected = connected
         if not connected and self._session and self._session.capturing:
+            self._append_result(self._session.record_failure("串口断开"))
+            self._save_session()
             self._session.abort()
             self._set_status(self._tr.tr("status_disconnected"), "#86909C")
         self._refresh_buttons()
 
     def restore_baseline(self) -> None:
         """Best-effort restoration before a deliberate disconnect or app exit."""
-        if not self._session:
+        if not self._session or not self._session.capturing:
             return
         baseline = self._session.abort()
         if baseline and self._worker.is_open():
             self._send_pid(baseline)
+        self._worker.release("ai")
 
     def _refresh_buttons(self) -> None:
         capturing = bool(self._session and self._session.capturing)

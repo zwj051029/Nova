@@ -1,4 +1,5 @@
 import collections
+import math
 import platform
 import pyqtgraph as pg
 from PySide6.QtWidgets import (
@@ -90,7 +91,10 @@ def parse_line(line: str) -> tuple[int, float, float, float] | None:
         parts = line[1:].split(",")
         if len(parts) != 4:
             return None
-        return int(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])
+        values = tuple(float(part) for part in parts[1:])
+        if not all(math.isfinite(value) for value in values):
+            return None
+        return int(parts[0]), *values
     except ValueError:
         return None
 
@@ -127,11 +131,11 @@ class PidRow:
 
         # 数值框
         self.spinbox = PrecisionSpinBox()
-        self.spinbox.setRange(0.0, 100.0)
+        self.spinbox.setRange(0.0, 1_000_000.0)
         self.spinbox.setSingleStep(10 ** -self._decimals)
         self.spinbox.set_display_decimals(self._decimals)
         self.spinbox.setValue(0.0)
-        self.spinbox.setFixedWidth(146)
+        self.spinbox.setMinimumWidth(170)
         self.spinbox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         spinboxes_grid.addWidget(self.spinbox, row, 0)
 
@@ -179,6 +183,13 @@ class PidRow:
     def formatted_value(self) -> str:
         return f"{self.value():.{self._decimals}f}"
 
+    def set_value(self, value: float) -> None:
+        if not math.isfinite(value) or not 0 <= value <= 1_000_000:
+            raise ValueError("PID must be finite and between 0 and 1000000")
+        decimals = max(2, len(f"{value:.6f}".rstrip("0").partition(".")[2]))
+        self._set_decimals(decimals, value)
+        self.spinbox.setValue(round(value, decimals))
+
     def retranslate(self, t) -> None:
         self.send_btn.setText(t("send_param_btn"))
         self.precision_label.setText(t("decimal_places_btn").format(n=self._decimals))
@@ -214,7 +225,11 @@ class PidRow:
         self.precision_increase_btn.setStyleSheet(icon_style)
 
     def _update_slider_range(self) -> None:
-        self.slider.setRange(0, 100 * (10 ** self._decimals))
+        self.slider.setRange(0, 2000)
+        self._slider_origin = max(0.0, self.spinbox.value() - 1000 * 10 ** -self._decimals)
+
+    def _slider_position(self, value: float) -> int:
+        return round((value - self._slider_origin) * 10 ** self._decimals)
 
     def _increase_decimals(self) -> None:
         self._set_decimals(self._decimals + 1)
@@ -236,8 +251,8 @@ class PidRow:
         self.spinbox.setSingleStep(10 ** -self._decimals)
         self._update_slider_range()
         if not preserve_editor_text:
-            self.spinbox.setValue(value)
-        self.slider.setValue(round(value * (10 ** self._decimals)))
+            self.spinbox.setValue(round(value, decimals))
+        self.slider.setValue(self._slider_position(value))
         self._syncing = False
         self.retranslate(Translator().tr)
         self.precision_decrease_btn.setEnabled(self._decimals > 2)
@@ -255,10 +270,8 @@ class PidRow:
         self._edit_sync_pending = False
         text = self.spinbox.lineEdit().text()
         decimal_point = self.spinbox.locale().decimalPoint()
-        if decimal_point not in text:
-            return
-        fraction = text.rsplit(decimal_point, 1)[1]
-        if not fraction.isdigit():
+        fraction = text.rsplit(decimal_point, 1)[1] if decimal_point in text else ""
+        if fraction and not fraction.isdigit():
             return
         decimals = max(2, min(6, len(fraction)))
         if decimals == self._decimals:
@@ -272,14 +285,16 @@ class PidRow:
         if self._syncing:
             return
         self._syncing = True
-        self.spinbox.setValue(v / (10 ** self._decimals))
+        self.spinbox.setValue(round(self._slider_origin + v / (10 ** self._decimals), self._decimals))
         self._syncing = False
 
     def _spinbox_changed(self, v: float) -> None:
         if self._syncing:
             return
         self._syncing = True
-        self.slider.setValue(round(v * (10 ** self._decimals)))
+        if not 0 <= self._slider_position(v) <= 2000:
+            self._update_slider_range()
+        self.slider.setValue(self._slider_position(v))
         self._syncing = False
 
 
@@ -420,6 +435,8 @@ class PidPage(QWidget):
         _, setpoint, actual, _ = parsed
         self._buf_setpoint.append(setpoint)
         self._buf_actual.append(actual)
+
+    def refresh_plot(self) -> None:
         self._curve_setpoint.setData(list(self._buf_setpoint))
         self._curve_actual.setData(list(self._buf_actual))
 
@@ -433,9 +450,8 @@ class PidPage(QWidget):
         return self._pid_kp.value(), self._pid_ki.value(), self._pid_kd.value()
 
     def set_values(self, kp: float, ki: float, kd: float) -> None:
-        self._pid_kp.spinbox.setValue(kp)
-        self._pid_ki.spinbox.setValue(ki)
-        self._pid_kd.spinbox.setValue(kd)
+        for row, value in zip((self._pid_kp, self._pid_ki, self._pid_kd), (kp, ki, kd)):
+            row.set_value(value)
 
     # ------------------------------------------------------------------
     # PID send

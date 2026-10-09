@@ -46,11 +46,11 @@ class ToastWidget(QWidget):
         layout.addWidget(msg_lbl)
 
         self.setStyleSheet(f"""
-            ToastWidget {
+            ToastWidget {{
                 background-color: {c['surface']};
                 border: 1px solid {c['border']};
                 border-radius: 8px;
-            }
+            }}
         """)
 
         self.adjustSize()
@@ -170,6 +170,7 @@ class MainWindow(QMainWindow):
         self._worker = SerialWorker()
         self._worker.chunk_received.connect(self._on_chunk_received)
         self._worker.lines_received.connect(self._on_lines_received)
+        self._worker.connection_lost.connect(self._on_connection_lost)
 
         self._connected_port = ""
         self._connected_baud = 0
@@ -320,6 +321,13 @@ class MainWindow(QMainWindow):
             for line in lines:
                 self._pid_page.ingest_line(line)
                 self._ai_page.ingest_line(line)
+            self._pid_page.refresh_plot()
+            self._ai_page.refresh_plot()
+
+    def _on_connection_lost(self, reason: str) -> None:
+        self._worker.close()
+        self._serial_page.handle_disconnect()
+        self._show_toast(reason, False)
 
     def _on_data_sent(self) -> None:
         self._status_indicator.update_tx(self._tr.tr, self._worker.tx_bytes)

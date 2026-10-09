@@ -36,6 +36,12 @@ class BayesianPIDOptimizer:
         yn = (y - y_mean) / y_std
 
         candidates = self._candidate_pool(best.gains, lower, upper, reference)
+        seen = {tuple(round(v, 6) for v in r.gains.as_array()) for r in history}
+        candidates = np.unique(np.round(candidates, 6), axis=0)
+        candidates = np.asarray([row for row in candidates if tuple(row) not in seen
+                                 and validate_candidate(PIDGains(*row), reference, self.config)[0]])
+        if not len(candidates):
+            raise RuntimeError("当前范围内没有未测试参数，请调整范围或结束调参")
         cx = (candidates - lower) / span
         mean, std = self._gp_predict(x, yn, cx)
         # Lower-confidence bound: exploit good regions while retaining exploration.
@@ -71,9 +77,11 @@ class BayesianPIDOptimizer:
     ) -> np.ndarray:
         span = upper - lower
         center = np.asarray(best.as_array(), dtype=float)
-        radius = np.maximum(span * 0.12, np.abs(center) * 0.20)
-        raw = self._rng.uniform(-1.0, 1.0, size=(2500, 3)) * radius + center
-        raw = np.clip(raw, lower, upper)
+        base = np.asarray(reference.as_array())
+        radius = np.maximum(np.abs(base), upper * 0.01) * self.config.safety.max_relative_gain_change
+        low = np.maximum(lower, base - radius)
+        high = np.minimum(upper, base + radius)
+        raw = self._rng.uniform(low, high, size=(1200, 3))
         valid = []
         for row in raw:
             gains = PIDGains(*map(float, row))
