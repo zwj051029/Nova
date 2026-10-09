@@ -306,6 +306,7 @@ class MainWindow(QMainWindow):
         self._pending_lines.extend(lines)
 
     def _flush_lines(self) -> None:
+        self._pid_page.set_send_enabled(self._worker.is_open() and self._worker.owner is None)
         # 刷新原始数据到接收区
         if self._pending_chunks:
             chunks = self._pending_chunks
@@ -437,6 +438,13 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
+        auto = self._ai_page._auto
+        if auto and auto.active:
+            if auto.state != "stopping":
+                auto.stop()
+            QTimer.singleShot(200, self.close)
+            event.ignore()
+            return
         self._ai_page.restore_baseline()
         self._worker.close()
         super().closeEvent(event)

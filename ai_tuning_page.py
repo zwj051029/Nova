@@ -10,7 +10,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout,
     QHeaderView, QLabel, QPushButton, QSpinBox, QSplitter, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget, QComboBox, QScrollArea, QMessageBox,
 )
 
 from i18n import Translator
@@ -19,6 +19,7 @@ from tuning.models import PIDGains, SafetyLimits, TuningConfig
 from tuning.session import TuningSession
 from tuning.storage import save_session
 from tuning.protocol import telemetry
+from tuning.automatic import AutomaticTuner
 from theme import colors
 
 
@@ -76,6 +77,8 @@ class AiTuningPage(QWidget):
         self.on_data_sent = None
         self.on_pid_applied = None
         self.baseline_provider = None
+        self._auto = None
+        self._history_only = False
         self._build_ui()
         self._timer = QTimer(self)
         self._timer.setInterval(200)
@@ -101,7 +104,13 @@ class AiTuningPage(QWidget):
         root.addLayout(header)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._build_config_panel())
+        self._config_panel = self._build_config_panel()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(self._config_panel)
+        scroll.setMinimumWidth(320)
+        splitter.addWidget(scroll)
         splitter.addWidget(self._build_workspace())
         splitter.setSizes([340, 800])
         splitter.setStretchFactor(1, 1)
@@ -204,6 +213,23 @@ class AiTuningPage(QWidget):
             buttons.addWidget(button)
         layout.addLayout(buttons)
 
+        automatic = QGridLayout()
+        self._run_mode = QComboBox()
+        self._run_mode.addItems(["每轮确认 / Confirm each trial", "受限自动 / Automatic"])
+        self._auto_start = QPushButton("▶ 自动试验 / Start")
+        self._auto_next = QPushButton("下一轮 / Confirm next")
+        self._accept_best = QPushButton("接受最优 / Accept best")
+        self._restore_original = QPushButton("恢复原参数 / Restore")
+        self._auto_start.clicked.connect(self._start_automatic)
+        self._auto_next.clicked.connect(lambda: self._auto.confirm_next() if self._auto else None)
+        self._accept_best.clicked.connect(lambda: self._auto.decide(True) if self._auto else None)
+        self._restore_original.clicked.connect(lambda: self._auto.decide(False) if self._auto else None)
+        for col, widget in enumerate((self._run_mode, self._auto_start, self._auto_next)):
+            automatic.addWidget(widget, 0, col)
+        automatic.addWidget(self._accept_best, 1, 1)
+        automatic.addWidget(self._restore_original, 1, 2)
+        layout.addLayout(automatic)
+
         self._hint = QLabel()
         self._hint.setWordWrap(True)
         self._hint.setStyleSheet(
@@ -285,6 +311,50 @@ class AiTuningPage(QWidget):
     def _gains_from_inputs(self) -> PIDGains:
         return PIDGains(self._kp.value(), self._ki.value(), self._kd.value())
 
+    def _start_automatic(self, checked=False, confirmed=False) -> None:
+        if not self._require_connection() or self._worker.owner:
+            return
+        config = self._config()
+        if not confirmed:
+            answer = QMessageBox.warning(self, "自动调参安全确认 / Safety",
+                f"设备将执行 {config.initial_target:g} → {config.step_target:g} 阶跃。\n"
+                "请确认机械行程、负载、输出限制、独立急停和设备看门狗。\n"
+                "试验结束/异常将停止输出，不会自动恢复运动。\n"
+                "仅支持 Nova v2 协议；建议先使用 sim://。",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel)
+            if answer != QMessageBox.StandardButton.Ok:
+                return
+        try:
+            self._worker.acquire("ai")
+            self._auto = AutomaticTuner(config, lambda data: self._worker.write(data, owner="ai"),
+                on_result=self._auto_result, on_status=self._auto_status, on_applied=self.on_pid_applied)
+            self._session = self._auto.session
+            self._history_only = False
+            self._session_path = None
+            self._table.setRowCount(0)
+            self._auto.start(self._gains_from_inputs(), self._run_mode.currentIndex() == 1)
+            self._baseline_value.setText(self._session.baseline.formatted())
+            self._best_value.setText("--")
+        except (ValueError, RuntimeError) as exc:
+            self._worker.release("ai")
+            self._toast(str(exc), False)
+        self._refresh_buttons()
+
+    def _auto_result(self, result) -> None:
+        self._append_result(result)
+        self._save_session()
+
+    def _auto_status(self, state, message) -> None:
+        self._set_status(state, "#F53F3F" if state in ("aborted", "stopping") else "#165DFF")
+        self._hint.setText(message)
+        if self._auto and self._auto.next_gains:
+            self._proposed_value.setText(self._auto.next_gains.formatted())
+        if state in AutomaticTuner.TERMINAL:
+            self._worker.release("ai")
+            self._save_session()
+        self._refresh_buttons()
+
     def _load_manual_pid(self) -> None:
         if not self.baseline_provider:
             return
@@ -310,6 +380,8 @@ class AiTuningPage(QWidget):
             self._toast(self._tr.tr("ai_invalid_baseline"), False)
             return
         self._session = TuningSession(config)
+        self._auto = None
+        self._history_only = False
         self._session.set_baseline(gains)
         self._proposed = None
         self._session_path = None
@@ -374,7 +446,12 @@ class AiTuningPage(QWidget):
             self._begin_capture_ui()
 
     def _abort(self) -> None:
+        if self._auto and self._auto.active:
+            self._auto.stop()
+            return
         if not self._session:
+            return
+        if self._history_only or (self._auto and not self._auto.active):
             return
         baseline = self._session.abort()
         self._proposed = None
@@ -398,6 +475,9 @@ class AiTuningPage(QWidget):
             return False
 
     def ingest_line(self, line: str) -> None:
+        if self._auto and self._auto.active:
+            self._auto.handle_line(line)
+            return
         frame = telemetry(line)
         if frame is None or not self._session or not self._session.capturing or frame.channel != self._session.config.channel:
             return
@@ -440,6 +520,10 @@ class AiTuningPage(QWidget):
         self._refresh_buttons()
 
     def _update_capture_clock(self) -> None:
+        if self._auto and self._auto.active:
+            self._auto.tick()
+            self.refresh_plot()
+            return
         if not self._session or not self._session.capturing:
             return
         elapsed = time.monotonic() - self._capture_t0
@@ -500,6 +584,8 @@ class AiTuningPage(QWidget):
 
     def set_connected(self, connected: bool) -> None:
         self._connected = connected
+        if not connected and self._auto and self._auto.active:
+            self._auto.fail("串口断开")
         if not connected and self._session and self._session.capturing:
             self._append_result(self._session.record_failure("串口断开"))
             self._save_session()
@@ -509,6 +595,9 @@ class AiTuningPage(QWidget):
 
     def restore_baseline(self) -> None:
         """Best-effort restoration before a deliberate disconnect or app exit."""
+        if self._auto and self._auto.active:
+            self._auto.stop()
+            return
         if not self._session or not self._session.capturing:
             return
         baseline = self._session.abort()
@@ -518,13 +607,21 @@ class AiTuningPage(QWidget):
 
     def _refresh_buttons(self) -> None:
         capturing = bool(self._session and self._session.capturing)
+        active = bool(self._auto and self._auto.active)
+        self._auto_start.setEnabled(self._connected and not capturing and not active)
+        self._auto_next.setEnabled(active and self._auto.state == "awaiting_confirmation")
+        self._accept_best.setEnabled(active and self._auto.state == "review")
+        self._restore_original.setEnabled(active and self._auto.state == "review")
+        self._run_mode.setEnabled(not active and not capturing)
+        if hasattr(self, "_config_panel"):
+            self._config_panel.setEnabled(not active and not capturing)
         valid_history = bool(self._session and self._session.best_result())
-        self._baseline_btn.setEnabled(self._connected and not capturing)
-        self._finish_btn.setEnabled(capturing)
-        self._suggest_btn.setEnabled(not capturing and valid_history)
+        self._baseline_btn.setEnabled(self._connected and not capturing and not active)
+        self._finish_btn.setEnabled(capturing and not active)
+        self._suggest_btn.setEnabled(not capturing and valid_history and not active)
         self._apply_btn.setEnabled(
-            self._connected and not capturing and self._proposed is not None)
-        self._abort_btn.setEnabled(self._session is not None)
+            self._connected and not capturing and self._proposed is not None and not active)
+        self._abort_btn.setEnabled(active or (self._session is not None and self._auto is None and not self._history_only))
 
     def _set_status(self, text: str, color: str) -> None:
         self._status_color = color
@@ -571,6 +668,8 @@ class AiTuningPage(QWidget):
         self._suggest_btn.setStyleSheet(secondary)
         self._load_manual_btn.setStyleSheet(secondary)
         self._abort_btn.setStyleSheet(danger)
+        for button in (self._auto_start, self._auto_next, self._accept_best, self._restore_original):
+            button.setStyleSheet(secondary)
         self._hint.setStyleSheet(
             f"background:{c['warning_bg']}; color:{c['warning_text']};"
             f"border:1px solid {c['warning_border']}; border-radius:5px; padding:7px;")

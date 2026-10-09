@@ -1,0 +1,118 @@
+import unittest
+from tuning.automatic import AutomaticTuner
+from tuning.device import SimulatedDevice
+from tuning.models import PIDGains, SafetyLimits, TuningConfig
+from tuning.protocol import decode, encode
+
+
+class Harness:
+    def __init__(self, automatic=True, drop_every=0):
+        self.time = 0.
+        self.queue = []
+        self.device = SimulatedDevice(drop_every=drop_every)
+        self.config = TuningConfig(sample_period_seconds=.02, capture_seconds=4, max_trials=4,
+            stability_timeout=30, safety=SafetyLimits(actual_min=-2, actual_max=2, output_abs_max=10))
+        self.tuner = AutomaticTuner(self.config, self.send, clock=lambda:self.time)
+        self.tuner.start(PIDGains(1,.5,0), automatic)
+
+    def send(self, data):
+        self.queue.append(encode(self.device.command(decode(data.decode()))).decode())
+
+    def step(self, telemetry=True):
+        self.time += self.device.dt
+        for line in self.queue[:]:
+            self.queue.remove(line)
+            self.tuner.handle_line(line)
+        frame = self.device.step()
+        if frame and telemetry:
+            self.tuner.handle_line(encode(frame).decode())
+        self.tuner.tick()
+
+    def run(self, until=("review","aborted","awaiting_confirmation"), limit=12000):
+        for _ in range(limit):
+            self.step()
+            if self.tuner.state in until:
+                return self.tuner.state
+        raise AssertionError((self.tuner.state,self.tuner.message))
+
+
+class AutomaticTests(unittest.TestCase):
+    def test_complete_automatic_and_accept(self):
+        h = Harness()
+        self.assertEqual(h.run(), "review", h.tuner.message)
+        self.assertIsNotNone(h.tuner.verified)
+        self.assertFalse(h.device.enabled)
+        self.assertEqual(len(h.tuner.session.history),4)
+        h.tuner.decide(True)
+        h.run(until=("accepted","aborted"))
+        self.assertEqual(h.tuner.state,"accepted",h.tuner.message)
+        self.assertEqual(h.device.gains,h.tuner.verified.gains)
+        self.assertFalse(h.device.enabled)
+
+    def test_human_confirmation_and_restore(self):
+        h = Harness(automatic=False)
+        original = h.device.gains
+        while h.run() == "awaiting_confirmation":
+            self.assertFalse(h.device.enabled)
+            h.tuner.confirm_next()
+        self.assertEqual(h.tuner.state,"review",h.tuner.message)
+        h.tuner.decide(False)
+        h.run(until=("restored","aborted"))
+        self.assertEqual(h.device.gains,original)
+        self.assertEqual(h.tuner.state,"restored")
+
+    def test_missing_ack_and_unsupported_device(self):
+        clock = [0.]
+        sent = []
+        tuner = AutomaticTuner(TuningConfig(), sent.append, clock=lambda:clock[0])
+        tuner.start(PIDGains(1,0,0))
+        clock[0]=2
+        tuner.tick()
+        self.assertEqual(tuner.state,"stopping")
+        clock[0]=4
+        tuner.tick()
+        self.assertEqual(tuner.state,"aborted")
+        self.assertFalse(any(decode(data.decode()).get("cmd")=="set_pid" for data in sent))
+
+    def test_dropped_frame_stops_device(self):
+        h = Harness(drop_every=20)
+        self.assertEqual(h.run(),"aborted")
+        self.assertFalse(h.device.enabled)
+
+    def test_telemetry_timeout_and_manual_interruption(self):
+        h = Harness()
+        for _ in range(200):
+            h.step(telemetry=False)
+        self.assertEqual(h.tuner.state,"aborted")
+        self.assertFalse(h.device.enabled)
+        h = Harness()
+        for _ in range(100):
+            h.step()
+        h.tuner.stop()
+        self.assertEqual(h.run(),"aborted")
+        self.assertFalse(h.device.enabled)
+
+    def test_pid_ack_mismatch_is_rejected(self):
+        h=Harness()
+        original=h.device.command
+        def altered(message):
+            ack=original(message)
+            if message.get("cmd")=="set_pid":
+                ack["gains"]=[999,999,999]
+            return ack
+        h.device.command=altered
+        self.assertEqual(h.run(),"aborted")
+        self.assertIn("PID",h.tuner.message)
+
+    def test_external_target_change_and_unsupported_capability(self):
+        h=Harness()
+        h.run(until=("capturing","aborted"))
+        h.device.target=.7
+        self.assertEqual(h.run(),"aborted")
+        self.assertIn("目标值",h.tuner.message)
+        h=Harness()
+        first=decode(h.queue[0])
+        first["capabilities"]=[]
+        h.queue[0]=encode(first).decode()
+        self.assertEqual(h.run(),"aborted")
+        self.assertIn("不支持",h.tuner.message)
