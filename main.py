@@ -464,6 +464,8 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setOrganizationName("Nova")
     app.setApplicationName("Nova")
+    from version import __version__
+    app.setApplicationVersion(__version__)
     app.setStyleSheet(global_style(load_theme()))
     window = MainWindow()
     window.show()

@@ -3,6 +3,7 @@
 Run separately: python tests/gui_smoke.py
 """
 import os
+import argparse
 os.environ.setdefault("QT_QPA_PLATFORM","offscreen")
 import sys
 import time
@@ -18,12 +19,15 @@ from tuning.reporting import export_html, export_csv
 
 
 def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--screenshots-dir",type=Path,help="Also save the six current UI previews here")
+    args=parser.parse_args()
     artifacts=Path(__file__).resolve().parents[1]/".test-artifacts"
     artifacts.mkdir(exist_ok=True)
     os.environ["NOVA_DATA_DIR"]=str(artifacts)
     app=QApplication.instance() or QApplication([])
     if os.name=="nt" and not QFontDatabase.families():
-        for font in ("msyh.ttc","segoeui.ttf","consola.ttf"):
+        for font in ("msyh.ttc","segoeui.ttf","consola.ttf","seguiemj.ttf","seguisym.ttf"):
             QFontDatabase.addApplicationFont(str(Path(os.environ.get("WINDIR","C:/Windows"))/"Fonts"/font))
     errors=[]
     old_hook=sys.excepthook
@@ -69,6 +73,9 @@ def main():
                 window._switch_page(index)
                 QTest.qWait(80)
                 window.grab().save(str(artifacts/f"{name}-{theme}.png"))
+                if args.screenshots_dir:
+                    args.screenshots_dir.mkdir(parents=True,exist_ok=True)
+                    assert window.grab().save(str(args.screenshots_dir/f"{name}-{theme}.png"))
         dialog=ConfigDialog(page._config(),window)
         dialog.show()
         QTest.qWait(100)

@@ -34,6 +34,12 @@ Nova 提供串口收发、实时波形、手动 PID 调参和本地贝叶斯优�
 
 ## 快速开始
 
+### 下载 Windows 发行版
+
+从 [GitHub Releases](https://github.com/zwj051029/Nova/releases) 下载 `Nova-v0.1.0-windows-x64.zip`，完整解压后运行其中的 `Nova.exe`。请保留同目录下的 `_internal` 文件夹，无需另行安装 Python。
+
+发行版为未签名的便携应用。可用同一发行页的 `SHA256SUMS.txt` 核对下载文件；请勿关闭系统安全保护。真实硬件使用前仍需完成协议适配和安全验收。
+
 ### 环境要求
 
 - Python 3.11 或更高版本。
@@ -225,6 +231,23 @@ Linux / macOS 可将上述 Python 路径替换为 `./venv/bin/python`。当前�
 
 随后让 Nova 连接配对端口，例如 `COM21`，波特率为 `115200`。该发送器输出连续变化的数据，不适合作为自动阶跃调参试验源；完整流程请使用 `sim://`。
 
+### 构建 Windows 发行包
+
+在 Windows x64 Python 环境中运行：
+
+```powershell
+.\venv\Scripts\python.exe -m pip install -r requirements-build.txt
+.\venv\Scripts\python.exe scripts/build_release.py
+```
+
+构建脚本使用 [PyInstaller](https://pyinstaller.org/en/stable/) 生成便携目录，并在 `dist/` 输出 ZIP 和 `SHA256SUMS.txt`，同时附带运行依赖许可与构建版本信息。发布前应运行回归与界面集成测试，并对打包后的 `Nova.exe` 做启动和模拟串口验证。
+
+重新生成 README 的六张截图：
+
+```powershell
+.\venv\Scripts\python.exe -B -X utf8 tests/gui_smoke.py --screenshots-dir images
+```
+
 ## 项目结构
 
 ```text
@@ -258,26 +281,44 @@ Nova/
 
 ## 界面预览
 
-以下截图用于展示页面布局，具体控件以当前版本为准。
+以下为 v0.1.0 实际运行截图，使用内置 `sim://` 模拟设备采集。每个页面分别展示浅色和深色主题。
 
 <details>
 <summary>串口收发</summary>
 
-![串口收发界面](images/串口收发.png)
+浅色主题
+
+![串口收发 — 浅色](images/serial-light.png)
+
+深色主题
+
+![串口收发 — 深色](images/serial-dark.png)
 
 </details>
 
 <details>
 <summary>手动 PID 调参</summary>
 
-![手动 PID 调参界面](images/PID调参.png)
+浅色主题
+
+![手动 PID 调参 — 浅色](images/pid-light.png)
+
+深色主题
+
+![手动 PID 调参 — 深色](images/pid-dark.png)
 
 </details>
 
 <details>
 <summary>AI 辅助调参</summary>
 
-![AI 辅助调参界面](images/AI调参.png)
+浅色主题
+
+![AI 辅助调参 — 浅色](images/ai-light.png)
+
+深色主题
+
+![AI 辅助调参 — 深色](images/ai-dark.png)
 
 </details>
 
